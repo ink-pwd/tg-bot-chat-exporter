@@ -9,6 +9,7 @@ from redis.asyncio import Redis
 
 from application.services.keyed_locks import KeyedLocks
 from application.services.user_timezones import UserTimezones
+from application.use_cases.analyze_daily_questions import AnalyzeDailyQuestions
 from application.use_cases.configure_auto_export import ConfigureAutoExport
 from application.use_cases.export_daily_conversations import ExportDailyConversations, utc_now
 from application.use_cases.login_telegram_account import LoginTelegramAccount
@@ -17,6 +18,10 @@ from application.use_cases.run_auto_exports import RunAutoExports
 from infrastructure.cache.redis_export_cache import RedisExportCache
 from infrastructure.config.logging import setup_logging
 from infrastructure.config.settings import load_settings
+from infrastructure.nlp.heuristic_message_classifier import HeuristicMessageClassifier
+from infrastructure.nlp.lemmatizer import Lemmatizer
+from infrastructure.nlp.text_normalizer import TextNormalizer, load_concept_labels
+from infrastructure.nlp.tfidf_question_clusterer import TfidfQuestionClusterer
 from infrastructure.persistence.database import create_engine, create_session_factory
 from infrastructure.persistence.repositories.bot_user_repository import SqlBotUserRepository
 from infrastructure.persistence.repositories.export_schedule_repository import (
@@ -73,12 +78,17 @@ async def main() -> None:
     )
     cache_redis = Redis.from_url(settings.redis_url, decode_responses=True)
 
+    analyzer = AnalyzeDailyQuestions(
+        HeuristicMessageClassifier(),
+        TfidfQuestionClusterer(TextNormalizer.from_resources(Lemmatizer()), load_concept_labels()),
+    )
     export_use_case = ExportDailyConversations(
         account_repo,
         session_repo,
         message_gateway,
         RedisExportCache(cache_redis),
         AiogramExportDelivery(bot),
+        analyzer,
         KeyedLocks(),
         timezones,
     )

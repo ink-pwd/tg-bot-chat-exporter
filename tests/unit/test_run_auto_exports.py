@@ -13,7 +13,14 @@ from application.use_cases.run_auto_exports import MAX_ATTEMPTS, RunAutoExports
 from domain.entities.export_schedule import ExportSchedule
 from domain.enums.account_status import AccountStatus
 from domain.value_objects.telegram_session import TelegramSession
-from tests.unit.export_fakes import FakeDelivery, FakeMessageGateway, InMemoryExportCache, conversation, message
+from tests.unit.export_fakes import (
+    FakeAnalyzer,
+    FakeDelivery,
+    FakeMessageGateway,
+    InMemoryExportCache,
+    conversation,
+    message,
+)
 from tests.unit.fakes import InMemoryAccounts, InMemoryBotUsers, InMemorySchedules, InMemorySessions
 
 OWNER = 100
@@ -90,7 +97,15 @@ def users():
 def runner(accounts, sessions, schedules, gateway, delivery, notifier, users, clock):
     timezones = UserTimezones(users, KYIV)
     export = ExportDailyConversations(
-        accounts, sessions, gateway, InMemoryExportCache(), delivery, KeyedLocks(), timezones, clock
+        accounts,
+        sessions,
+        gateway,
+        InMemoryExportCache(),
+        delivery,
+        FakeAnalyzer(),
+        KeyedLocks(),
+        timezones,
+        clock,
     )
     return RunAutoExports(schedules, accounts, timezones, export, notifier, clock)
 
@@ -168,7 +183,7 @@ async def test_blocked_bot_disables_all_owner_schedules(runner, accounts, sessio
     second = add_scheduled(accounts, sessions, schedules, telegram_user_id=2, at=time(23, 0))
     foreign = add_scheduled(accounts, sessions, schedules, owner=STRANGER, telegram_user_id=3, at=time(23, 0))
 
-    async def blocked(user_id, export):
+    async def blocked(user_id, export, report):
         raise RecipientUnavailable()
 
     delivery.send = blocked
@@ -226,7 +241,7 @@ async def test_flood_wait_postpones_retry(runner, accounts, sessions, schedules,
 async def test_too_large_is_reported_without_retries(runner, accounts, sessions, schedules, gateway, delivery, notifier):
     account = add_scheduled(accounts, sessions, schedules)
 
-    async def too_large(user_id, export):
+    async def too_large(user_id, export, report):
         raise ExportTooLarge()
 
     delivery.send = too_large

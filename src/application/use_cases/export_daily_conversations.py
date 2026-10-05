@@ -1,14 +1,17 @@
+import asyncio
 import logging
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 
 from application.dto.export import CachedExport, ExportSummary
+from application.dto.report import DailyQuestionReport
 from application.errors import CachedFileUnavailable, SessionRevoked
 from application.interfaces.export_cache import ExportCache
 from application.interfaces.export_delivery import ExportDelivery
 from application.interfaces.telegram_message_gateway import TelegramMessageGateway
 from application.services.keyed_locks import KeyedLocks
 from application.services.user_timezones import UserTimezones
+from application.use_cases.analyze_daily_questions import AnalyzeDailyQuestions
 from domain.entities.daily_conversation_export import DailyConversationExport
 from domain.entities.telegram_account import TelegramAccount
 from domain.enums.account_status import AccountStatus
@@ -29,7 +32,7 @@ def utc_now() -> datetime:
 
 
 class ExportDailyConversations:
-    """Выгрузка переписок аккаунта за день: владелец → кеш → Telegram → файл."""
+    """Выгрузка переписок аккаунта за день: владелец → кеш → Telegram → JSON + отчёт."""
 
     def __init__(
         self,
@@ -38,6 +41,7 @@ class ExportDailyConversations:
         gateway: TelegramMessageGateway,
         cache: ExportCache,
         delivery: ExportDelivery,
+        analyzer: AnalyzeDailyQuestions,
         locks: KeyedLocks,
         timezones: UserTimezones,
         clock: Callable[[], datetime] = utc_now,
@@ -47,6 +51,7 @@ class ExportDailyConversations:
         self._gateway = gateway
         self._cache = cache
         self._delivery = delivery
+        self._analyzer = analyzer
         self._locks = locks
         self._timezones = timezones
         self._clock = clock
@@ -97,7 +102,7 @@ class ExportDailyConversations:
     async def _deliver_cached(
         self, user_id: int, account: TelegramAccount, day: DayRange, cached: CachedExport
     ) -> ExportSummary | None:
-        if cached.file_id is not None:
+        if cached.file_ids:
             try:
                 await self._delivery.resend(user_id, account, day, cached)
             except CachedFileUnavailable:
@@ -134,13 +139,16 @@ class ExportDailyConversations:
             exported_at=self._clock(),
             conversations=fetched.conversations,
         )
-        file_id = await self._delivery.send(user_id, export) if export.messages_count else None
+        file_ids: tuple[str, ...] = ()
+        if export.messages_count:
+            report = await self._analyze(export)
+            file_ids = tuple(await self._delivery.send(user_id, export, report))
 
         ttl = FINISHED_DAY_TTL if day.is_finished(export.exported_at) else CURRENT_DAY_TTL
         await self._cache.put(
             account.id,
             day,
-            CachedExport(file_id, export.conversations_count, export.messages_count, export.exported_at),
+            CachedExport(file_ids, export.conversations_count, export.messages_count, export.exported_at),
             ttl,
         )
         logger.info(
@@ -158,6 +166,17 @@ class ExportDailyConversations:
             exported_at=export.exported_at,
             from_cache=False,
         )
+
+    async def _analyze(self, export: DailyConversationExport) -> DailyQuestionReport | None:
+        """Отчёт строится в отдельном потоке: это вычисления, они не должны блокировать бота.
+
+        Сбой анализа не должен лишать пользователя выгрузки — тогда уйдёт только JSON.
+        """
+        try:
+            return await asyncio.to_thread(self._analyzer.analyze, export)
+        except Exception:
+            logger.exception("Question analysis failed: account=%s", export.account_id)
+            return None
 
     async def _revoke(self, account: TelegramAccount) -> None:
         logger.warning("Account session revoked: account=%s", account.id)

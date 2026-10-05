@@ -77,16 +77,33 @@ def _key(account_id: int, day: DayRange) -> tuple[int, str, str]:
 @dataclass
 class FakeDelivery:
     sent: list[tuple[int, DailyConversationExport]] = field(default_factory=list)
+    reports: list[object] = field(default_factory=list)
     resent: list[tuple[int, str]] = field(default_factory=list)
     stale_file_ids: set[str] = field(default_factory=set)
 
-    async def send(self, user_id: int, export: DailyConversationExport) -> str:
+    async def send(self, user_id: int, export: DailyConversationExport, report) -> list[str]:
         self.sent.append((user_id, export))
-        return f"file-{len(self.sent)}"
+        self.reports.append(report)
+        number = len(self.sent)
+        return [f"file-{number}"] + ([f"report-{number}"] if report is not None else [])
 
     async def resend(
         self, user_id: int, account: TelegramAccount, day: DayRange, cached: CachedExport
     ) -> None:
-        if cached.file_id in self.stale_file_ids:
+        if set(cached.file_ids) & self.stale_file_ids:
             raise CachedFileUnavailable()
-        self.resent.append((user_id, cached.file_id))
+        self.resent.append((user_id, cached.file_ids[0]))
+
+
+@dataclass
+class FakeAnalyzer:
+    """Вместо отчёта возвращает метку; может «упасть», как настоящий анализ при ошибке."""
+
+    fail: bool = False
+    analyzed: list[DailyConversationExport] = field(default_factory=list)
+
+    def analyze(self, export: DailyConversationExport):
+        self.analyzed.append(export)
+        if self.fail:
+            raise RuntimeError("analysis bug")
+        return f"report-for-{export.account_id}"

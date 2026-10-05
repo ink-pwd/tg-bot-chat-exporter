@@ -18,7 +18,7 @@ pytestmark = [
 ]
 
 DAY = DayRange(date(2026, 10, 4), ZoneInfo("Europe/Kyiv"))
-EXPORT = CachedExport("file-1", 3, 42, datetime(2026, 10, 5, 9, 0, tzinfo=UTC))
+EXPORT = CachedExport(("file-1", "report-1"), 3, 42, datetime(2026, 10, 5, 9, 0, tzinfo=UTC))
 
 
 @pytest.fixture
@@ -50,7 +50,7 @@ async def test_keys_are_separated_by_account_and_timezone(cache):
 
 
 async def test_empty_day_without_file(cache):
-    empty = CachedExport(None, 0, 0, EXPORT.exported_at)
+    empty = CachedExport((), 0, 0, EXPORT.exported_at)
 
     await cache.put(1, DAY, empty, timedelta(hours=1))
 
@@ -70,4 +70,14 @@ async def test_only_reference_and_counters_are_stored(cache, redis):
 
     stored = json.loads(await redis.get("export:1:2026-10-04:Europe/Kyiv"))
 
-    assert set(stored) == {"file_id", "conversations_count", "messages_count", "exported_at"}
+    assert set(stored) == {"file_ids", "conversations_count", "messages_count", "exported_at"}
+
+
+async def test_entries_from_before_reports_are_still_readable(cache, redis):
+    await redis.set(
+        "export:1:2026-10-04:Europe/Kyiv",
+        json.dumps({"file_id": "old", "conversations_count": 1, "messages_count": 2,
+                    "exported_at": "2026-10-05T09:00:00+00:00"}),
+    )
+
+    assert (await cache.get(1, DAY)).file_ids == ("old",)

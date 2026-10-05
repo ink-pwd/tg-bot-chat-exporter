@@ -20,7 +20,7 @@ class FetchedDay:
 class CachedExport:
     """Ссылка на уже отправленную выгрузку. Текстов сообщений здесь нет."""
 
-    file_id: str | None  # None — за день не было сообщений, файл не отправлялся
+    file_ids: tuple[str, ...]  # JSON и HTML-отчёт; пусто — за день не было сообщений
     conversations_count: int
     messages_count: int
     exported_at: datetime

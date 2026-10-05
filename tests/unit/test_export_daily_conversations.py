@@ -18,6 +18,7 @@ from domain.errors import AccountNotFound, AccountRevoked, InvalidExportDay
 from domain.value_objects.day_range import DayRange
 from domain.value_objects.telegram_session import TelegramSession
 from tests.unit.export_fakes import (
+    FakeAnalyzer,
     FakeDelivery,
     FakeMessageGateway,
     InMemoryExportCache,
@@ -81,9 +82,22 @@ def users():
 
 
 @pytest.fixture
-def export(accounts, sessions, gateway, cache, delivery, clock, users):
+def analyzer():
+    return FakeAnalyzer()
+
+
+@pytest.fixture
+def export(accounts, sessions, gateway, cache, delivery, analyzer, clock, users):
     return ExportDailyConversations(
-        accounts, sessions, gateway, cache, delivery, KeyedLocks(), UserTimezones(users, KYIV), clock
+        accounts,
+        sessions,
+        gateway,
+        cache,
+        delivery,
+        analyzer,
+        KeyedLocks(),
+        UserTimezones(users, KYIV),
+        clock,
     )
 
 
@@ -95,7 +109,8 @@ def account(accounts, sessions):
 
 
 def cached(file_id: str | None = "file-cached", exported_at: datetime = NOW) -> CachedExport:
-    return CachedExport(file_id, conversations_count=2, messages_count=7, exported_at=exported_at)
+    file_ids = (file_id, f"{file_id}-report") if file_id else ()
+    return CachedExport(file_ids, conversations_count=2, messages_count=7, exported_at=exported_at)
 
 
 # --- изоляция -----------------------------------------------------------------
@@ -143,7 +158,24 @@ async def test_export_fetches_sends_and_caches(export, account, gateway, cache, 
     assert summary.messages_count == 1
     assert summary.conversations_count == 1
     assert summary.from_cache is False
-    assert cache.rows[(account.id, "2026-10-04", "Europe/Kyiv")].file_id == "file-1"
+    assert cache.rows[(account.id, "2026-10-04", "Europe/Kyiv")].file_ids == ("file-1", "report-1")
+
+
+async def test_report_is_built_and_sent_with_json(export, account, analyzer, delivery):
+    await export.execute(OWNER, account.id, YESTERDAY)
+
+    assert len(analyzer.analyzed) == 1
+    assert delivery.reports == [f"report-for-{account.id}"]
+
+
+async def test_analysis_failure_still_sends_json(export, account, analyzer, delivery, cache):
+    analyzer.fail = True
+
+    summary = await export.execute(OWNER, account.id, YESTERDAY)
+
+    assert summary.messages_count == 1
+    assert delivery.reports == [None]
+    assert cache.rows[(account.id, "2026-10-04", "Europe/Kyiv")].file_ids == ("file-1",)
 
 
 async def test_finished_day_is_cached_for_a_day(export, account, cache):
@@ -188,14 +220,15 @@ async def test_day_boundaries_follow_user_timezone(export, account, gateway, use
     assert day.timezone.key == "America/New_York"
 
 
-async def test_empty_day_sends_no_file(export, account, gateway, cache, delivery):
+async def test_empty_day_sends_no_file(export, account, gateway, cache, delivery, analyzer):
     gateway.conversations = []
 
     summary = await export.execute(OWNER, account.id, YESTERDAY)
 
     assert summary.messages_count == 0
     assert delivery.sent == []
-    assert cache.rows[(account.id, "2026-10-04", "Europe/Kyiv")].file_id is None
+    assert analyzer.analyzed == []
+    assert cache.rows[(account.id, "2026-10-04", "Europe/Kyiv")].file_ids == ()
 
 
 # --- кеш ------------------------------------------------------------------------
@@ -229,7 +262,7 @@ async def test_stale_file_id_triggers_fresh_export(export, account, gateway, cac
 
     assert summary.from_cache is False
     assert len(gateway.calls) == 1
-    assert cache.rows[(account.id, "2026-10-04", "Europe/Kyiv")].file_id == "file-1"
+    assert cache.rows[(account.id, "2026-10-04", "Europe/Kyiv")].file_ids == ("file-1", "report-1")
 
 
 async def test_refresh_ignores_cache(export, account, gateway, cache, clock):

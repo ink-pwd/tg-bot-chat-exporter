@@ -59,8 +59,9 @@ def setup_logging(level: str, log_dir: str | None, retention_days: int) -> None:
     if log_dir:
         handlers.append(DailyFileHandler(Path(log_dir), retention_days))
     logging.basicConfig(level=level, format=_FORMAT, handlers=handlers, force=True)
-    # Telethon на INFO пишет подробности соединений — нам они не нужны
+    # Telethon и pymorphy3 на INFO пишут служебные подробности — нам они не нужны
     logging.getLogger("telethon").setLevel(logging.WARNING)
+    logging.getLogger("pymorphy3").setLevel(logging.WARNING)
 
 
 def _today() -> date:

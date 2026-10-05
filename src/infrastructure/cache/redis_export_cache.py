@@ -19,8 +19,12 @@ class RedisExportCache:
         if raw is None:
             return None
         data = json.loads(raw)
+        if "file_ids" in data:
+            file_ids = tuple(data["file_ids"])
+        else:  # запись до появления отчётов: один JSON-файл
+            file_ids = (data["file_id"],) if data.get("file_id") else ()
         return CachedExport(
-            file_id=data["file_id"],
+            file_ids=file_ids,
             conversations_count=data["conversations_count"],
             messages_count=data["messages_count"],
             exported_at=datetime.fromisoformat(data["exported_at"]),
@@ -29,7 +33,7 @@ class RedisExportCache:
     async def put(self, account_id: int, day: DayRange, export: CachedExport, ttl: timedelta) -> None:
         payload = json.dumps(
             {
-                "file_id": export.file_id,
+                "file_ids": list(export.file_ids),
                 "conversations_count": export.conversations_count,
                 "messages_count": export.messages_count,
                 "exported_at": export.exported_at.isoformat(),
