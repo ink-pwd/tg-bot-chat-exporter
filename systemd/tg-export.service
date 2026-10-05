@@ -1,0 +1,9 @@
+[Unit]
+Description=Telegram daily chat export
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/des/projects/tg-exporter
+ExecStart=/home/des/projects/tg-exporter/.venv/bin/python export.py
