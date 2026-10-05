@@ -31,3 +31,12 @@ def test_flood_wait_shows_duration():
 
 def test_unexpected_error_has_no_text():
     assert error_text(RuntimeError("boom")) is None
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [domain_errors.AccountRevoked(), domain_errors.InvalidExportDay(), app_errors.ExportTooLarge()],
+    ids=lambda e: type(e).__name__,
+)
+def test_export_errors_have_text(exc):
+    assert error_text(exc)

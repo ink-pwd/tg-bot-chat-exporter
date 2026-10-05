@@ -62,3 +62,15 @@ def test_log_dir_empty_by_default():
 def test_log_retention_must_be_positive():
     with pytest.raises(ConfigError):
         load_settings({**BASE_ENV, "LOG_RETENTION_DAYS": "0"})
+
+
+def test_default_timezone():
+    settings = load_settings(BASE_ENV)
+
+    assert settings.default_timezone.key == "Europe/Kyiv"
+    assert settings.export_concurrency == 3
+
+
+def test_unknown_timezone():
+    with pytest.raises(ConfigError, match="DEFAULT_TIMEZONE"):
+        load_settings({**BASE_ENV, "DEFAULT_TIMEZONE": "Mars/Base"})

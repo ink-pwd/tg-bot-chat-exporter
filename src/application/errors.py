@@ -34,3 +34,15 @@ class TooManyAttempts(ApplicationError):
 
 class TelegramUnavailable(ApplicationError):
     """Прочие сбои Telegram API — подробности только в логах."""
+
+
+class SessionRevoked(ApplicationError):
+    """Telegram больше не принимает сессию (завершена в «Устройствах», аккаунт удалён и т.п.)."""
+
+
+class CachedFileUnavailable(ApplicationError):
+    """Ранее отправленный файл больше нельзя переслать по file_id."""
+
+
+class ExportTooLarge(ApplicationError):
+    """Выгрузка не помещается в лимит Telegram на размер файла даже в сжатом виде."""

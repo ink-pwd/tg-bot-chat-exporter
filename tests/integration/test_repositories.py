@@ -122,3 +122,23 @@ async def test_deleting_account_deletes_session(session_factory, accounts, sessi
     assert await sessions.get(account.id) is None
     async with session_factory() as db:
         assert await db.scalar(select(TelegramAccountModel)) is None
+
+
+async def test_mark_revoked_only_by_owner(accounts):
+    account = await accounts.save_authorized(OWNER, profile())
+
+    await accounts.mark_revoked(account.id, STRANGER)
+    assert (await accounts.get_owned(account.id, OWNER)).status is AccountStatus.ACTIVE
+
+    await accounts.mark_revoked(account.id, OWNER)
+    assert (await accounts.get_owned(account.id, OWNER)).status is AccountStatus.REVOKED
+
+
+async def test_relogin_reactivates_revoked_account(accounts):
+    account = await accounts.save_authorized(OWNER, profile())
+    await accounts.mark_revoked(account.id, OWNER)
+
+    again = await accounts.save_authorized(OWNER, profile())
+
+    assert again.id == account.id
+    assert again.status is AccountStatus.ACTIVE

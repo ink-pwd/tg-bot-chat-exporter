@@ -1,4 +1,4 @@
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -54,6 +54,17 @@ class SqlTelegramAccountRepository:
         except IntegrityError:
             # параллельный вход в тот же аккаунт: уникальный telegram_user_id уже занят
             raise AccountOwnedByAnotherUser() from None
+
+    async def mark_revoked(self, account_id: int, owner_id: int) -> None:
+        async with self._session_factory.begin() as db:
+            await db.execute(
+                update(TelegramAccountModel)
+                .where(
+                    TelegramAccountModel.id == account_id,
+                    TelegramAccountModel.owner_id == owner_id,
+                )
+                .values(status=AccountStatus.REVOKED)
+            )
 
     async def delete_owned(self, account_id: int, owner_id: int) -> None:
         async with self._session_factory.begin() as db:

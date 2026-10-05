@@ -63,6 +63,10 @@ class InMemoryAccounts:
         self._next_id += 1
         return account
 
+    async def mark_revoked(self, account_id: int, owner_id: int) -> None:
+        if (account := self.rows.get(account_id)) and account.owner_id == owner_id:
+            self.rows[account_id] = replace(account, status=AccountStatus.REVOKED)
+
     async def delete_owned(self, account_id: int, owner_id: int) -> None:
         if (account := self.rows.get(account_id)) and account.owner_id == owner_id:
             del self.rows[account_id]

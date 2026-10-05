@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass, field
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 class ConfigError(Exception):
@@ -16,6 +17,9 @@ class Settings:
     session_encryption_keys: tuple[str, ...] = field(repr=False)
     # пусто — бот доступен всем
     allowed_user_ids: frozenset[int] = frozenset()
+    # границы суток для выгрузок (позже — у каждого пользователя свой)
+    default_timezone: ZoneInfo = ZoneInfo("Europe/Kyiv")
+    export_concurrency: int = 3
     log_level: str = "INFO"
     # пусто — только консоль
     log_dir: str | None = None
@@ -41,6 +45,16 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
     if retention_days < 1:
         raise ConfigError("LOG_RETENTION_DAYS должна быть не меньше 1")
 
+    timezone_name = env.get("DEFAULT_TIMEZONE", "Europe/Kyiv").strip() or "Europe/Kyiv"
+    try:
+        default_timezone = ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ConfigError(f"Неизвестный часовой пояс DEFAULT_TIMEZONE={timezone_name}") from None
+
+    export_concurrency = as_int("EXPORT_CONCURRENCY", env.get("EXPORT_CONCURRENCY", "3"))
+    if export_concurrency < 1:
+        raise ConfigError("EXPORT_CONCURRENCY должна быть не меньше 1")
+
     allowed = frozenset(
         as_int("ALLOWED_USER_IDS", part.strip())
         for part in env.get("ALLOWED_USER_IDS", "").split(",")
@@ -56,6 +70,8 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
             key.strip() for key in required("SESSION_ENCRYPTION_KEY").split(",") if key.strip()
         ),
         allowed_user_ids=allowed,
+        default_timezone=default_timezone,
+        export_concurrency=export_concurrency,
         log_level=env.get("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         log_dir=env.get("LOG_DIR", "").strip() or None,
         log_retention_days=retention_days,

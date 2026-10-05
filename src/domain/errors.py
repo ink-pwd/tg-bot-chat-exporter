@@ -16,3 +16,11 @@ class AccountOwnedByAnotherUser(DomainError):
 
 class InvalidPhoneNumber(DomainError):
     pass
+
+
+class AccountRevoked(DomainError):
+    """Сессия аккаунта больше не действует — нужно подключить его заново."""
+
+
+class InvalidExportDay(DomainError):
+    """Нельзя выгрузить день, который ещё не наступил."""

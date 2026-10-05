@@ -1,9 +1,12 @@
 """Тексты бота и перевод ошибок в понятные пользователю сообщения."""
+from datetime import date, datetime
 from html import escape
+from zoneinfo import ZoneInfo
 
 from application.dto.login import CodeDelivery, CodeSent
 from application.errors import (
     CodeExpired,
+    ExportTooLarge,
     CodeResendUnavailable,
     InvalidCode,
     InvalidPassword,
@@ -14,7 +17,13 @@ from application.errors import (
 )
 from domain.entities.telegram_account import TelegramAccount
 from domain.enums.account_status import AccountStatus
-from domain.errors import AccountNotFound, AccountOwnedByAnotherUser, InvalidPhoneNumber
+from domain.errors import (
+    AccountNotFound,
+    AccountOwnedByAnotherUser,
+    AccountRevoked,
+    InvalidExportDay,
+    InvalidPhoneNumber,
+)
 
 MAIN_MENU = (
     "Выгрузка переписок Telegram за день в JSON.\n\n"
@@ -46,6 +55,11 @@ CODE_AS_MESSAGE = (
 PASSWORD_DELETE_HINT = "Не удалось удалить сообщение с паролем — удалите его вручную."
 LOGIN_CANCELLED = "Вход отменён."
 LOGIN_EXPIRED = "Вход не найден или устарел. Начните заново."
+ASK_DATE = (
+    "За какой день выгрузить переписки?\n\n"
+    "Отправьте дату, например <code>04.10</code> или <code>2026-10-04</code>."
+)
+INVALID_DATE = "Не понял дату. Пример: <code>04.10</code> или <code>2026-10-04</code>."
 UNEXPECTED_ERROR = "Что-то пошло не так. Попробуйте ещё раз позже."
 
 _DELIVERY = {
@@ -69,6 +83,39 @@ def code_prompt(sent: CodeSent, entered: int, notice: str | None = None) -> str:
     total = sent.length or max(entered, 5)
     lines += ["", "Код: " + " ".join("●" if i < entered else "○" for i in range(total))]
     return "\n".join(lines)
+
+
+def format_day(day: date) -> str:
+    return day.strftime("%d.%m.%Y")
+
+
+def export_started(day: date) -> str:
+    return f"⏳ Выгружаю переписки за {format_day(day)}…\nНа больших аккаунтах это может занять несколько минут."
+
+
+def export_caption(account_name: str, day: date, conversations: int, messages: int) -> str:
+    return (
+        f"📦 <b>{escape(account_name)}</b> — {format_day(day)}\n"
+        f"Чатов: {conversations}, сообщений: {messages}"
+    )
+
+
+def export_summary(
+    account_name: str,
+    day: date,
+    conversations: int,
+    messages: int,
+    exported_at: datetime,
+    from_cache: bool,
+    timezone: ZoneInfo,
+) -> str:
+    if messages == 0:
+        text = f"За {format_day(day)} в аккаунте <b>{escape(account_name)}</b> сообщений нет."
+    else:
+        text = f"✅ Готово: чатов {conversations}, сообщений {messages}."
+    if from_cache:
+        text += f"\nДанные на {exported_at.astimezone(timezone):%H:%M} (из кеша)."
+    return text
 
 
 def account_connected(account: TelegramAccount) -> str:
@@ -100,6 +147,15 @@ def error_text(exc: Exception) -> str | None:
     match exc:
         case AccountNotFound():
             return "Аккаунт не найден."
+        case AccountRevoked():
+            return (
+                "Сессия аккаунта завершена в Telegram (например, из «Устройств»). "
+                "Подключите аккаунт заново."
+            )
+        case InvalidExportDay():
+            return "Этот день ещё не наступил."
+        case ExportTooLarge():
+            return "Выгрузка за этот день слишком большая для отправки через Telegram."
         case AccountOwnedByAnotherUser():
             return "Этот Telegram-аккаунт уже подключён другим пользователем бота."
         case InvalidPhoneNumber():

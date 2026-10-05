@@ -18,3 +18,11 @@ class LoginCallback(CallbackData, prefix="login"):
 
 class KeypadCallback(CallbackData, prefix="kp"):
     key: str  # 0-9 | del | ok
+
+
+class ExportCallback(CallbackData, prefix="exp"):
+    """День считается в момент нажатия: «today»/«yesterday» не устаревают после полуночи."""
+
+    action: str  # today | yesterday | ask_date | refresh
+    account_id: int
+    day: str = ""  # YYYY-MM-DD, только для refresh
