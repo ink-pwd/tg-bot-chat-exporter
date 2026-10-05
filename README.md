@@ -1,46 +1,65 @@
 # tg-exporter
 
-Ежедневная выгрузка сообщений из всех чатов Telegram за сутки в JSON, для нескольких аккаунтов.
+Telegram-бот для выгрузки переписок подключённых Telegram-аккаунтов за день в JSON.
 
-## Установка
-
-```bash
-python -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-Скопируйте `.env.example` в `.env` и впишите `API_ID` и `API_HASH` (https://my.telegram.org → API development tools) и имена аккаунтов: `ACCOUNTS=work1,work2`.
+Каждый пользователь бота видит и выгружает только те аккаунты, которые подключил сам.
 
 ## Запуск
 
+Нужны Docker и Docker Compose.
+
+1. Скопируйте `.env.example` в `.env` и заполните:
+   - `BOT_TOKEN` — токен от [@BotFather](https://t.me/BotFather);
+   - `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` — с https://my.telegram.org → API development tools;
+   - `SESSION_ENCRYPTION_KEY` — ключ шифрования сессий:
+     ```bash
+     python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+     ```
+     **Храните ключ отдельно от базы.** Если его потерять, все аккаунты придётся подключать заново;
+   - `MYSQL_*` — пароли для MySQL;
+   - `ALLOWED_USER_IDS` — по желанию: id пользователей Telegram, которым доступен бот.
+2. Запустите:
+   ```bash
+   docker compose up -d --build
+   docker compose logs -f bot
+   ```
+   Миграции базы применяются автоматически при старте бота.
+
+## Логи
+
+Логи пишутся в консоль (`docker compose logs bot`) и в папку `./logs`, отдельный файл на каждый день: `2026-10-05.log`, `2026-10-06.log` и т.д. Дата и время в логах — по UTC. Файлы старше `LOG_RETENTION_DAYS` дней (по умолчанию 30) удаляются автоматически.
+
+Тексты сообщений, коды, пароли и сессии в логи не попадают.
+
+## Подключение аккаунта
+
+В боте: «Подключить аккаунт» →
+- **QR-код** — отсканируйте его в Telegram на телефоне: «Настройки → Устройства → Подключить устройство»;
+- **по номеру телефона** — код вводится кнопками. Не отправляйте код сообщением: Telegram аннулирует код, который кто-то переслал в чат.
+
+Если включена двухэтапная проверка, бот попросит пароль и сразу удалит сообщение с ним.
+
+Сессии хранятся в MySQL в зашифрованном виде. Если отключить аккаунт в боте, сессия завершается и в Telegram.
+
+## Тесты
+
 ```bash
-python export.py --login work1          # вход, один раз на каждый аккаунт
-python export.py                        # выгрузить вчерашний день по всем аккаунтам
-python export.py --account work1        # только один аккаунт
-python export.py --date 2026-10-01      # конкретный день
+# unit-тесты локально
+pip install -r requirements-dev.txt
+pytest tests/unit
+
+# все тесты, включая интеграционные с MySQL
+docker compose --profile test run --rm tests
 ```
 
-Результат: `exports/<аккаунт>/<дата>.json`.
+## Структура
 
-## Автозапуск (systemd)
-
-Каждый день в 00:30; если компьютер был выключен, выгрузка выполнится после включения.
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp systemd/tg-export.* ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now tg-export.timer
-loginctl enable-linger $USER   # работать, даже когда вы не вошли в систему
+```text
+src/
+├── domain/          сущности и правила, без внешних библиотек
+├── application/     сценарии (use cases) и интерфейсы
+├── infrastructure/  Telethon, MySQL (SQLAlchemy), шифрование, конфиг
+├── presentation/    хэндлеры и клавиатуры aiogram
+└── main.py          сборка зависимостей и запуск
+migrations/          миграции Alembic
 ```
-
-Проверка:
-
-```bash
-systemctl --user list-timers               # когда следующий запуск
-systemctl --user start tg-export.service   # запустить сейчас
-journalctl --user -u tg-export             # журнал
-```
-
-Не публикуйте `.env` и `sessions/`: файл сессии даёт полный доступ к аккаунту.

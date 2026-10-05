@@ -1,0 +1,10 @@
+.env
+# сессии Telethon на случай локальных экспериментов
+*.session
+*.session-journal
+.venv/
+__pycache__/
+.pytest_cache/
+logs/*
+!logs/.gitkeep
+.idea/
