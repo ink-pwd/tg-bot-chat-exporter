@@ -15,6 +15,7 @@ from application.errors import (
     TelegramUnavailable,
     TooManyAttempts,
 )
+from domain.entities.export_schedule import ExportSchedule
 from domain.entities.telegram_account import TelegramAccount
 from domain.enums.account_status import AccountStatus
 from domain.errors import (
@@ -23,6 +24,7 @@ from domain.errors import (
     AccountRevoked,
     InvalidExportDay,
     InvalidPhoneNumber,
+    InvalidTimezone,
 )
 
 MAIN_MENU = (
@@ -59,6 +61,14 @@ ASK_DATE = (
     "За какой день выгрузить переписки?\n\n"
     "Отправьте дату, например <code>04.10</code> или <code>2026-10-04</code>."
 )
+ASK_TIMEZONE = (
+    "Выберите часовой пояс или отправьте его название в формате IANA, "
+    "например <code>Europe/Lisbon</code> или <code>America/Chicago</code>."
+)
+ASK_SCHEDULE_TIME = "Отправьте время автовыгрузки, например <code>07:45</code>."
+INVALID_TIME = "Не понял время. Пример: <code>07:45</code>."
+TIMEZONE_KEPT = "Хорошо, время автовыгрузки не меняется."
+CHOOSE_SCHEDULE = "Время какого аккаунта изменить?"
 INVALID_DATE = "Не понял дату. Пример: <code>04.10</code> или <code>2026-10-04</code>."
 UNEXPECTED_ERROR = "Что-то пошло не так. Попробуйте ещё раз позже."
 
@@ -118,14 +128,87 @@ def export_summary(
     return text
 
 
+def utc_offset(timezone: ZoneInfo, now: datetime | None = None) -> str:
+    offset = (now or datetime.now(timezone)).astimezone(timezone).utcoffset()
+    minutes = int(offset.total_seconds() // 60)
+    sign = "+" if minutes >= 0 else "−"
+    hours, minutes = divmod(abs(minutes), 60)
+    return f"UTC{sign}{hours:02d}:{minutes:02d}"
+
+
+def timezone_label(timezone: ZoneInfo) -> str:
+    return f"{timezone.key}, {utc_offset(timezone)}"
+
+
+def settings(timezone: ZoneInfo) -> str:
+    return (
+        "⚙️ <b>Настройки</b>\n\n"
+        f"Часовой пояс: <b>{timezone_label(timezone)}</b>\n"
+        "По нему считаются границы суток в выгрузках и время автовыгрузки."
+    )
+
+
+def timezone_menu(timezone: ZoneInfo) -> str:
+    return f"Сейчас: <b>{timezone_label(timezone)}</b>\n\n{ASK_TIMEZONE}"
+
+
+def timezone_changed(timezone: ZoneInfo) -> str:
+    return f"✅ Часовой пояс: <b>{timezone_label(timezone)}</b>."
+
+
+def ask_change_schedule_times(
+    timezone: ZoneInfo, items: list[tuple[TelegramAccount, ExportSchedule]]
+) -> str:
+    lines = [timezone_changed(timezone), "", "Автовыгрузки теперь идут по новому поясу:"]
+    lines += [f"• {escape(account.display_name)} — {schedule.local_time:%H:%M}" for account, schedule in items]
+    lines += ["", "Изменить время?"]
+    return "\n".join(lines)
+
+
+def auto_export(account: TelegramAccount, schedule: ExportSchedule, timezone: ZoneInfo) -> str:
+    status = (
+        f"включена, каждый день в <b>{schedule.local_time:%H:%M}</b>"
+        if schedule.enabled
+        else "<b>выключена</b>"
+    )
+    return (
+        f"⏰ Автовыгрузка <b>{escape(account.display_name)}</b>: {status}.\n\n"
+        "В выбранное время бот пришлёт выгрузку за прошедший день. "
+        f"Часовой пояс: {timezone_label(timezone)} — сменить можно в «Настройках».\n\n"
+        "Выберите время:"
+    )
+
+
+def auto_export_completed_note(day: date, messages: int) -> str:
+    if messages == 0:
+        return f"⏰ Автовыгрузка: за {format_day(day)} сообщений нет."
+    return f"⏰ Автовыгрузка за {format_day(day)} выполнена."
+
+
+def auto_export_revoked(account: TelegramAccount) -> str:
+    return (
+        f"⚠️ Автовыгрузка <b>{escape(account.display_name)}</b> выключена: "
+        "сессия аккаунта завершена в Telegram. Подключите аккаунт заново и включите автовыгрузку."
+    )
+
+
+def auto_export_failed(account: TelegramAccount, day: date, reason: str) -> str:
+    return (
+        f"❌ Не удалось выполнить автовыгрузку <b>{escape(account.display_name)}</b> "
+        f"за {format_day(day)}.\n{reason}\n\nМожно выгрузить этот день вручную из карточки аккаунта."
+    )
+
+
 def account_connected(account: TelegramAccount) -> str:
     return f"✅ Аккаунт <b>{escape(account.display_name)}</b> подключён."
 
 
-def account_card(account: TelegramAccount) -> str:
+def account_card(account: TelegramAccount, schedule: ExportSchedule, timezone: ZoneInfo) -> str:
     lines = [f"<b>{escape(account.display_name)}</b>"]
     if account.username:
         lines.append(f"@{escape(account.username)}")
+    if schedule.enabled and account.status is AccountStatus.ACTIVE:
+        lines += ["", f"⏰ Автовыгрузка каждый день в {schedule.local_time:%H:%M} ({timezone_label(timezone)})"]
     if account.status is AccountStatus.REVOKED:
         lines += ["", "⚠️ Сессия завершена в Telegram. Подключите аккаунт заново."]
     return "\n".join(lines)
@@ -152,6 +235,8 @@ def error_text(exc: Exception) -> str | None:
                 "Сессия аккаунта завершена в Telegram (например, из «Устройств»). "
                 "Подключите аккаунт заново."
             )
+        case InvalidTimezone():
+            return "Не знаю такого часового пояса. Пример: <code>Europe/Lisbon</code>."
         case InvalidExportDay():
             return "Этот день ещё не наступил."
         case ExportTooLarge():

@@ -2,7 +2,7 @@ from aiogram.filters.callback_data import CallbackData
 
 
 class MenuCallback(CallbackData, prefix="menu"):
-    action: str  # main | accounts | add
+    action: str  # main | accounts | add | settings
 
 
 class AccountCallback(CallbackData, prefix="acc"):
@@ -26,3 +26,16 @@ class ExportCallback(CallbackData, prefix="exp"):
     action: str  # today | yesterday | ask_date | refresh
     account_id: int
     day: str = ""  # YYYY-MM-DD, только для refresh
+
+
+class SettingsCallback(CallbackData, prefix="set"):
+    action: str  # tz_menu | tz | tz_manual | tz_keep | tz_change
+    value: str = ""  # IANA-имя пояса для action=tz
+
+
+class AutoExportCallback(CallbackData, prefix="auto"):
+    """account_id приходит от клиента — владелец проверяется в use case."""
+
+    action: str  # open | set | ask | off
+    account_id: int
+    value: str = ""  # HHMM для action=set

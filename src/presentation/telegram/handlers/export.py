@@ -23,7 +23,7 @@ async def export_day(
 ) -> None:
     # выгрузка может идти минутами, а callback нужно подтвердить сразу
     await callback.answer()
-    today = export.today()
+    today = await export.today(callback.from_user.id)
     match callback_data.action:
         case "today":
             day = today
@@ -59,7 +59,7 @@ async def ask_date(
 @router.message(ExportStates.date, F.text)
 async def receive_date(message: Message, state: FSMContext, export: ExportDailyConversations) -> None:
     account_id: int = (await state.get_data())["account_id"]
-    day = parse_day(message.text, export.today())
+    day = parse_day(message.text, await export.today(message.from_user.id))
     if day is None:
         await message.answer(texts.INVALID_DATE, reply_markup=menus.back_to_account(account_id))
         return
@@ -92,5 +92,5 @@ async def _run_export(
             summary.from_cache,
             summary.day.timezone,
         ),
-        reply_markup=menus.export_done(account_id, day, can_refresh=day == export.today()),
+        reply_markup=menus.export_done(account_id, day, can_refresh=day == await export.today(user_id)),
     )

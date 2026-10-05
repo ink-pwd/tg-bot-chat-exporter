@@ -40,7 +40,7 @@ async def session_factory(migrated_database):
     engine = create_engine(TEST_DATABASE_URL)
     async with engine.begin() as conn:
         await conn.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
-        for table in ("telegram_sessions", "telegram_accounts", "bot_users"):
+        for table in ("export_schedules", "telegram_sessions", "telegram_accounts", "bot_users"):
             await conn.execute(text(f"TRUNCATE TABLE {table}"))
         await conn.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
     yield create_session_factory(engine)

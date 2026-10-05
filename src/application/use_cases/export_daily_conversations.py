@@ -1,7 +1,6 @@
 import logging
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from application.dto.export import CachedExport, ExportSummary
 from application.errors import CachedFileUnavailable, SessionRevoked
@@ -9,6 +8,7 @@ from application.interfaces.export_cache import ExportCache
 from application.interfaces.export_delivery import ExportDelivery
 from application.interfaces.telegram_message_gateway import TelegramMessageGateway
 from application.services.keyed_locks import KeyedLocks
+from application.services.user_timezones import UserTimezones
 from domain.entities.daily_conversation_export import DailyConversationExport
 from domain.entities.telegram_account import TelegramAccount
 from domain.enums.account_status import AccountStatus
@@ -39,7 +39,7 @@ class ExportDailyConversations:
         cache: ExportCache,
         delivery: ExportDelivery,
         locks: KeyedLocks,
-        timezone: ZoneInfo,
+        timezones: UserTimezones,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._accounts = accounts
@@ -48,11 +48,12 @@ class ExportDailyConversations:
         self._cache = cache
         self._delivery = delivery
         self._locks = locks
-        self._timezone = timezone
+        self._timezones = timezones
         self._clock = clock
 
-    def today(self) -> date:
-        return DayRange.today(self._clock(), self._timezone).day
+    async def today(self, user_id: int) -> date:
+        """Сегодняшний день в часовом поясе пользователя."""
+        return DayRange.today(self._clock(), await self._timezones.get(user_id)).day
 
     async def check_access(self, user_id: int, account_id: int) -> TelegramAccount:
         """Аккаунт принадлежит пользователю и его сессия действует."""
@@ -70,14 +71,14 @@ class ExportDailyConversations:
         account = await self.check_access(user_id, account_id)
 
         requested_at = self._clock()
-        day_range = DayRange(day, self._timezone)
+        day_range = DayRange(day, await self._timezones.get(user_id))
         if day_range.is_future(requested_at):
             raise InvalidExportDay()
 
         if not refresh and (summary := await self._from_cache(user_id, account, day_range)):
             return summary
 
-        async with self._locks.hold((account.id, day_range.day, self._timezone.key)):
+        async with self._locks.hold((account.id, day_range.day, day_range.timezone.key)):
             # пока ждали блокировку, ту же выгрузку мог закончить параллельный запрос
             cached = await self._cache.get(account.id, day_range)
             if cached is not None and (not refresh or cached.exported_at >= requested_at):

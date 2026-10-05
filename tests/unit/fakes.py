@@ -21,9 +21,51 @@ from domain.value_objects.telegram_session import TelegramSession
 class InMemoryBotUsers:
     def __init__(self) -> None:
         self.ids: set[int] = set()
+        self.timezones: dict[int, str] = {}
 
     async def ensure_exists(self, user_id: int) -> None:
         self.ids.add(user_id)
+
+    async def get_timezone(self, user_id: int) -> str | None:
+        return self.timezones.get(user_id)
+
+    async def set_timezone(self, user_id: int, timezone: str) -> None:
+        self.ids.add(user_id)
+        self.timezones[user_id] = timezone
+
+
+class InMemorySchedules:
+    """Как и SQL-репозиторий, сохраняет расписание только для аккаунта владельца."""
+
+    def __init__(self, accounts: "InMemoryAccounts") -> None:
+        self.accounts = accounts
+        self.rows: dict[int, "ExportSchedule"] = {}
+
+    async def get_owned(self, account_id: int, owner_id: int):
+        schedule = self.rows.get(account_id)
+        return schedule if schedule and schedule.owner_id == owner_id else None
+
+    async def list_owned(self, owner_id: int):
+        return [s for s in self.rows.values() if s.owner_id == owner_id]
+
+    async def list_enabled(self):
+        return [s for s in self.rows.values() if s.enabled]
+
+    async def save(self, schedule) -> None:
+        account = self.accounts.rows.get(schedule.account_id)
+        if account is not None and account.owner_id == schedule.owner_id:
+            self.rows[schedule.account_id] = schedule
+
+    async def mark_done(self, account_id: int, day) -> None:
+        self.rows[account_id] = self.rows[account_id].completed(day)
+
+    async def disable(self, account_id: int) -> None:
+        self.rows[account_id] = self.rows[account_id].disabled()
+
+    async def disable_all_owned(self, owner_id: int) -> None:
+        for account_id, schedule in list(self.rows.items()):
+            if schedule.owner_id == owner_id:
+                self.rows[account_id] = schedule.disabled()
 
 
 class InMemoryAccounts:

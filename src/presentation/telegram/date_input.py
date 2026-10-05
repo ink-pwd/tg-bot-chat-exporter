@@ -1,8 +1,9 @@
 import re
-from datetime import date
+from datetime import date, time
 
 _DOTTED = re.compile(r"(\d{1,2})[./](\d{1,2})(?:[./](\d{2}|\d{4}))?")
 _ISO = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
+_TIME = re.compile(r"(\d{1,2})[:.](\d{2})")
 
 
 def parse_day(text: str, today: date) -> date | None:
@@ -26,3 +27,14 @@ def parse_day(text: str, today: date) -> date | None:
     except ValueError:
         return None
     return None
+
+
+def parse_time(text: str) -> time | None:
+    """«7:45», «07:45», «07.45» → время."""
+    match = _TIME.fullmatch(text.strip())
+    if match is None:
+        return None
+    try:
+        return time(int(match[1]), int(match[2]))
+    except ValueError:
+        return None

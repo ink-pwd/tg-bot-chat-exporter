@@ -7,6 +7,7 @@ import pytest
 from application.dto.export import CachedExport
 from application.errors import SessionRevoked
 from application.services.keyed_locks import KeyedLocks
+from application.services.user_timezones import UserTimezones
 from application.use_cases.export_daily_conversations import (
     CURRENT_DAY_TTL,
     FINISHED_DAY_TTL,
@@ -23,7 +24,7 @@ from tests.unit.export_fakes import (
     conversation,
     message,
 )
-from tests.unit.fakes import InMemoryAccounts, InMemorySessions
+from tests.unit.fakes import InMemoryAccounts, InMemoryBotUsers, InMemorySessions
 
 OWNER = 100
 STRANGER = 200
@@ -75,9 +76,14 @@ def clock():
 
 
 @pytest.fixture
-def export(accounts, sessions, gateway, cache, delivery, clock):
+def users():
+    return InMemoryBotUsers()
+
+
+@pytest.fixture
+def export(accounts, sessions, gateway, cache, delivery, clock, users):
     return ExportDailyConversations(
-        accounts, sessions, gateway, cache, delivery, KeyedLocks(), KYIV, clock
+        accounts, sessions, gateway, cache, delivery, KeyedLocks(), UserTimezones(users, KYIV), clock
     )
 
 
@@ -159,11 +165,27 @@ async def test_future_day_is_rejected(export, account, gateway):
     assert gateway.calls == []
 
 
-async def test_today_uses_configured_timezone(export, clock):
+async def test_today_uses_default_timezone(export, clock):
     # 22:30 UTC 5 октября — это уже 6 октября по Киеву
     clock.now = datetime(2026, 10, 5, 22, 30, tzinfo=UTC)
 
-    assert export.today() == date(2026, 10, 6)
+    assert await export.today(OWNER) == date(2026, 10, 6)
+
+
+async def test_today_uses_user_timezone(export, clock, users):
+    clock.now = datetime(2026, 10, 5, 22, 30, tzinfo=UTC)
+    users.timezones[OWNER] = "Europe/London"  # 23:30 по Лондону — ещё 5 октября
+
+    assert await export.today(OWNER) == date(2026, 10, 5)
+
+
+async def test_day_boundaries_follow_user_timezone(export, account, gateway, users):
+    users.timezones[OWNER] = "America/New_York"
+
+    await export.execute(OWNER, account.id, YESTERDAY)
+
+    _, day = gateway.calls[0]
+    assert day.timezone.key == "America/New_York"
 
 
 async def test_empty_day_sends_no_file(export, account, gateway, cache, delivery):

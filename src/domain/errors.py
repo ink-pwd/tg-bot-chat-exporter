@@ -24,3 +24,7 @@ class AccountRevoked(DomainError):
 
 class InvalidExportDay(DomainError):
     """Нельзя выгрузить день, который ещё не наступил."""
+
+
+class InvalidTimezone(DomainError):
+    pass

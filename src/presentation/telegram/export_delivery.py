@@ -2,11 +2,11 @@ import gzip
 import re
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import BufferedInputFile
 
 from application.dto.export import CachedExport
-from application.errors import CachedFileUnavailable, ExportTooLarge
+from application.errors import CachedFileUnavailable, ExportTooLarge, RecipientUnavailable
 from domain.entities.daily_conversation_export import DailyConversationExport
 from domain.entities.telegram_account import TelegramAccount
 from domain.value_objects.day_range import DayRange
@@ -37,16 +37,19 @@ class AiogramExportDelivery:
 
     async def send(self, user_id: int, export: DailyConversationExport) -> str:
         content, filename = self.prepare_file(export)
-        message = await self._bot.send_document(
-            user_id,
-            BufferedInputFile(content, filename=filename),
-            caption=texts.export_caption(
-                export.profile.display_name,
-                export.day.day,
-                export.conversations_count,
-                export.messages_count,
-            ),
-        )
+        try:
+            message = await self._bot.send_document(
+                user_id,
+                BufferedInputFile(content, filename=filename),
+                caption=texts.export_caption(
+                    export.profile.display_name,
+                    export.day.day,
+                    export.conversations_count,
+                    export.messages_count,
+                ),
+            )
+        except TelegramForbiddenError as exc:
+            raise RecipientUnavailable() from exc
         return message.document.file_id
 
     async def resend(
@@ -63,6 +66,8 @@ class AiogramExportDelivery:
                     cached.messages_count,
                 ),
             )
+        except TelegramForbiddenError as exc:
+            raise RecipientUnavailable() from exc
         except TelegramBadRequest as exc:
             # file_id устарел (например, сменился токен бота) — выгрузим заново
             raise CachedFileUnavailable() from exc

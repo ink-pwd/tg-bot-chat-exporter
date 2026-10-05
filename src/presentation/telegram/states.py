@@ -9,3 +9,11 @@ class LoginStates(StatesGroup):
 
 class ExportStates(StatesGroup):
     date = State()
+
+
+class SettingsStates(StatesGroup):
+    timezone = State()
+
+
+class AutoExportStates(StatesGroup):
+    time = State()
