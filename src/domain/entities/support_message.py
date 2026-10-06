@@ -1,3 +1,4 @@
+"""Сообщение из беседы — только те поля, что нужны выгрузке и анализу."""
 from dataclasses import dataclass
 from datetime import datetime
 

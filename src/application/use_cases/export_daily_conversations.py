@@ -1,25 +1,24 @@
+"""Сценарий: выгрузка бесед пользователя за день — кеш, база, анализ, отправка JSON и отчёта."""
 import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 
-from application.dto.export import CachedExport, ExportSummary
-from application.dto.report import DailyQuestionReport
-from application.errors import ApplicationError, CachedFileUnavailable
-from application.interfaces.export_cache import ExportCache
-from application.interfaces.export_delivery import ExportDelivery
-from application.interfaces.export_progress import ExportProgress, ExportStage
-from application.interfaces.telegram_chat_gateway import TelegramChatGateway
+from application.dto.daily_report import DailyQuestionReport
+from application.dto.export_summary import CachedExport, ExportSummary
+from application.ports.export_cache import ExportCache
+from application.ports.export_delivery import ExportDelivery, ExportProgress, ExportStage
+from application.ports.storage_repositories import ChatMessageRepository, SupportChatRepository
+from application.ports.telegram_chat_actions import TelegramChatGateway
 from application.services.keyed_locks import KeyedLocks
 from application.services.user_timezones import UserTimezones
 from application.use_cases.analyze_daily_questions import AnalyzeDailyQuestions
+from application.user_facing_errors import ApplicationError, CachedFileUnavailable
+from domain.business_rule_errors import ExportDayTooOld, InvalidExportDay
 from domain.entities.conversation import Conversation
 from domain.entities.daily_conversation_export import DailyConversationExport
 from domain.entities.support_chat import SupportChat
-from domain.errors import ExportDayTooOld, InvalidExportDay
-from domain.repositories.chat_message_repository import ChatMessageRepository
-from domain.repositories.support_chat_repository import SupportChatRepository
 from domain.value_objects.day_range import DayRange
 
 logger = logging.getLogger(__name__)

@@ -1,6 +1,6 @@
+"""Сценарий: сохранение новых и отредактированных сообщений из подключённых бесед."""
+from application.ports.storage_repositories import ChatMessageRepository, SupportChatRepository
 from domain.entities.support_message import SupportMessage
-from domain.repositories.chat_message_repository import ChatMessageRepository
-from domain.repositories.support_chat_repository import SupportChatRepository
 
 
 class RecordChatMessages:

@@ -1,3 +1,4 @@
+"""Шифрование текстов сообщений (Fernet) с поддержкой смены ключа."""
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
 

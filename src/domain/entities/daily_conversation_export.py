@@ -1,3 +1,4 @@
+"""Выгрузка за день: все беседы владельца с сообщениями и счётчики."""
 from dataclasses import dataclass
 from datetime import datetime
 

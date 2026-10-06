@@ -23,7 +23,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from application.dto.report import (
+from application.dto.client_requests import ClientQuestion
+from application.dto.daily_report import (
     CategoryStat,
     ChatStat,
     DailyQuestionReport,
@@ -33,16 +34,15 @@ from application.dto.report import (
     LongWait,
     ResponseStats,
 )
-from application.interfaces.question_analysis import (
+from application.ports.text_analysis import (
     MessageClassifier,
     QuestionClusterer,
     RequestClassifier,
     TopicTokenizer,
 )
-from application.services.personal_data import mask_personal_data
+from application.services.personal_data_masking import mask_personal_data
 from domain.entities.conversation import Conversation
 from domain.entities.daily_conversation_export import DailyConversationExport
-from domain.entities.question_cluster import ClientQuestion
 from domain.entities.support_message import SupportMessage
 from domain.enums.chat_type import ChatType
 

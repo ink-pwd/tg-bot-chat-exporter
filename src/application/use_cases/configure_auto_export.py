@@ -1,10 +1,11 @@
+"""Сценарий: включить, изменить время или выключить ежедневную автовыгрузку пользователя."""
 import logging
 from collections.abc import Callable
 from datetime import datetime, time
 
+from application.ports.storage_repositories import ExportScheduleRepository
 from application.services.user_timezones import UserTimezones
 from domain.entities.export_schedule import ExportSchedule
-from domain.repositories.export_schedule_repository import ExportScheduleRepository
 
 logger = logging.getLogger(__name__)
 

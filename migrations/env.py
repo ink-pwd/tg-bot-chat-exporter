@@ -1,3 +1,4 @@
+"""Настройка Alembic: откуда брать адрес базы и модели таблиц для миграций."""
 import asyncio
 import os
 from logging.config import fileConfig
@@ -5,7 +6,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from infrastructure.persistence.models import Base
+from infrastructure.persistence.sqlalchemy_models import Base
 
 config = context.config
 if config.config_file_name is not None and config.attributes.get("configure_logger", True):

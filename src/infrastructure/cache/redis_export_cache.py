@@ -1,9 +1,10 @@
+"""Кеш выгрузок в Redis: file_id отправленных файлов и счётчики, без текстов переписок."""
 import json
 from datetime import datetime, timedelta
 
 from redis.asyncio import Redis
 
-from application.dto.export import CachedExport
+from application.dto.export_summary import CachedExport
 from domain.value_objects.day_range import DayRange
 
 

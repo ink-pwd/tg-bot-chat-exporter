@@ -1,3 +1,4 @@
+"""Расписание автовыгрузки и правила, за какой день и когда она должна сработать."""
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo

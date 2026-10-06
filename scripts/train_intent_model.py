@@ -26,13 +26,13 @@ from sklearn.linear_model import LogisticRegression
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from infrastructure.nlp.intent_classifier import MODEL_FILE, TAXONOMY_FILE  # noqa: E402
-from infrastructure.nlp.intent_features import (  # noqa: E402
+from infrastructure.nlp.intent_model_classifier import MODEL_FILE, TAXONOMY_FILE  # noqa: E402
+from infrastructure.nlp.intent_model_features import (  # noqa: E402
     char_vectorizer,
     model_text,
     word_vectorizer,
 )
-from infrastructure.nlp.lemmatizer import Lemmatizer  # noqa: E402
+from infrastructure.nlp.ru_uk_lemmatizer import Lemmatizer  # noqa: E402
 from infrastructure.nlp.text_normalizer import TextNormalizer  # noqa: E402
 
 C = 8.0

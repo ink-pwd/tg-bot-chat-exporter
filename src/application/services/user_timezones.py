@@ -1,8 +1,9 @@
+"""Часовой пояс пользователя: выбранный в настройках или пояс по умолчанию; проверка имени пояса."""
 from functools import cache
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
-from domain.errors import InvalidTimezone
-from domain.repositories.bot_user_repository import BotUserRepository
+from application.ports.storage_repositories import BotUserRepository
+from domain.business_rule_errors import InvalidTimezone
 
 
 class UserTimezones:

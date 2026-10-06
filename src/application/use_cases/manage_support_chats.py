@@ -1,12 +1,12 @@
+"""Сценарий: подключение бесед (бота добавили в группу), просмотр и отключение своих бесед."""
 import logging
 
-from application.errors import ApplicationError
-from application.interfaces.telegram_chat_gateway import TelegramChatGateway
+from application.ports.storage_repositories import BotUserRepository, SupportChatRepository
+from application.ports.telegram_chat_actions import TelegramChatGateway
+from application.user_facing_errors import ApplicationError
+from domain.business_rule_errors import ChatNotFound
 from domain.entities.support_chat import SupportChat
 from domain.enums.chat_type import ChatType
-from domain.errors import ChatNotFound
-from domain.repositories.bot_user_repository import BotUserRepository
-from domain.repositories.support_chat_repository import SupportChatRepository
 
 logger = logging.getLogger(__name__)
 

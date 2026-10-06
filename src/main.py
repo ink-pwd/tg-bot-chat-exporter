@@ -1,3 +1,4 @@
+"""Точка входа: собирает все зависимости (база, Redis, NLP, сценарии, хэндлеры) и запускает бота."""
 import asyncio
 import logging
 from datetime import timedelta
@@ -18,32 +19,38 @@ from application.use_cases.manage_support_chats import ManageSupportChats
 from application.use_cases.record_chat_messages import RecordChatMessages
 from application.use_cases.run_auto_exports import RunAutoExports
 from infrastructure.cache.redis_export_cache import RedisExportCache
-from infrastructure.config.logging import setup_logging
-from infrastructure.config.settings import load_settings
+from infrastructure.config.daily_file_logging import setup_logging
+from infrastructure.config.environment_settings import load_settings
 from infrastructure.nlp.heuristic_message_classifier import HeuristicMessageClassifier
-from infrastructure.nlp.intent_classifier import ModelIntentClassifier
-from infrastructure.nlp.lemmatizer import Lemmatizer
+from infrastructure.nlp.intent_model_classifier import ModelIntentClassifier
+from infrastructure.nlp.ru_uk_lemmatizer import Lemmatizer
 from infrastructure.nlp.text_normalizer import TextNormalizer, load_concept_labels
-from infrastructure.nlp.tfidf_question_clusterer import TfidfQuestionClusterer
-from infrastructure.persistence.database import create_engine, create_session_factory
-from infrastructure.persistence.repositories.bot_user_repository import SqlBotUserRepository
-from infrastructure.persistence.repositories.chat_message_repository import (
-    SqlChatMessageRepository,
+from infrastructure.nlp.tfidf_topic_clusterer import TfidfQuestionClusterer
+from infrastructure.periodic_scheduler import run_periodically
+from infrastructure.persistence.database_engine import create_engine, create_session_factory
+from infrastructure.persistence.mysql_bot_users import MySqlBotUserRepository
+from infrastructure.persistence.mysql_chat_messages import (
+    MySqlChatMessageRepository,
 )
-from infrastructure.persistence.repositories.export_schedule_repository import (
-    SqlExportScheduleRepository,
+from infrastructure.persistence.mysql_export_schedules import (
+    MySqlExportScheduleRepository,
 )
-from infrastructure.persistence.repositories.support_chat_repository import (
-    SqlSupportChatRepository,
+from infrastructure.persistence.mysql_support_chats import (
+    MySqlSupportChatRepository,
 )
-from infrastructure.scheduler import run_periodically
 from infrastructure.security.message_cipher import MessageCipher
-from infrastructure.telegram.bot.aiogram_chat_gateway import AiogramChatGateway
-from presentation.telegram.auto_export_notifier import AiogramAutoExportNotifier
-from presentation.telegram.export_delivery import AiogramExportDelivery
-from presentation.telegram.handlers import auto_export, chats, common, export, groups
-from presentation.telegram.handlers import settings as settings_handlers
-from presentation.telegram.middlewares.access import AccessMiddleware
+from infrastructure.telegram.bot.aiogram_chat_actions import AiogramChatGateway
+from presentation.telegram.adapters.telegram_auto_export_notifier import AiogramAutoExportNotifier
+from presentation.telegram.adapters.telegram_export_delivery import AiogramExportDelivery
+from presentation.telegram.handlers import (
+    auto_export_menu,
+    export_menu,
+    group_chat_events,
+    main_menu_and_errors,
+    my_chats_menu,
+    preferences_menu,
+)
+from presentation.telegram.middlewares.access_control import AccessMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +70,12 @@ async def main() -> None:
     engine = create_engine(settings.database_url)
     session_factory = create_session_factory(engine)
 
-    users = SqlBotUserRepository(session_factory)
-    chat_repo = SqlSupportChatRepository(session_factory)
-    message_repo = SqlChatMessageRepository(
+    users = MySqlBotUserRepository(session_factory)
+    chat_repo = MySqlSupportChatRepository(session_factory)
+    message_repo = MySqlChatMessageRepository(
         session_factory, MessageCipher(settings.message_encryption_keys)
     )
-    schedule_repo = SqlExportScheduleRepository(session_factory)
+    schedule_repo = MySqlExportScheduleRepository(session_factory)
     timezones = UserTimezones(users, settings.default_timezone)
 
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -124,13 +131,13 @@ async def main() -> None:
     private.message.filter(F.chat.type == ChatType.PRIVATE)
     private.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
     private.include_routers(
-        common.router,
-        chats.router,
-        export.router,
-        auto_export.router,
-        settings_handlers.router,
+        main_menu_and_errors.router,
+        my_chats_menu.router,
+        export_menu.router,
+        auto_export_menu.router,
+        preferences_menu.router,
     )
-    dp.include_routers(groups.router, private)
+    dp.include_routers(group_chat_events.router, private)
 
     background = [
         asyncio.create_task(run_periodically(auto_exports.run_due, SCHEDULER_INTERVAL_SECONDS)),

@@ -1,3 +1,4 @@
+"""Календарный день в часовом поясе с границами в UTC (учитывает переход на летнее время)."""
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo

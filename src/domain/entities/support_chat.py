@@ -1,3 +1,4 @@
+"""Беседа, в которую добавлен бот: владелец, статус и кто в ней отвечает от поддержки."""
 from dataclasses import dataclass
 
 from domain.enums.chat_type import ChatType

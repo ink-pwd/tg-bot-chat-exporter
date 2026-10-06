@@ -1,3 +1,4 @@
+"""Типы чатов Telegram: личный, группа, супергруппа, канал."""
 from enum import StrEnum
 
 

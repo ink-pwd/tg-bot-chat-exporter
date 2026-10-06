@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
-from infrastructure.nlp.lemmatizer import Lemmatizer, looks_ukrainian
+from infrastructure.nlp.ru_uk_lemmatizer import Lemmatizer, looks_ukrainian
 
 RESOURCES = Path(__file__).parent / "resources"
 

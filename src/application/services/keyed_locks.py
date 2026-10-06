@@ -1,3 +1,4 @@
+"""Блокировки по ключу: одинаковые выгрузки не выполняются параллельно, вторая ждёт первую."""
 import asyncio
 from collections.abc import AsyncIterator, Hashable
 from contextlib import asynccontextmanager

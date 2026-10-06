@@ -1,3 +1,4 @@
+"""Беседа в выгрузке: название, тип чата и её сообщения за день."""
 from dataclasses import dataclass, field
 
 from domain.entities.support_message import SupportMessage

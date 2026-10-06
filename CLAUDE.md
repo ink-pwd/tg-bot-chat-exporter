@@ -48,35 +48,39 @@ Do not introduce abstractions only for the sake of abstractions. Use interfaces/
 
 ```text
 src/
-├── domain/
-│   ├── entities/          support_chat, support_message, conversation, export_schedule, question_cluster, …
-│   ├── value_objects/     day_range, request_topic
+├── domain/                business concepts only
+│   ├── entities/          support_chat, support_message, conversation, daily export, export_schedule
+│   ├── value_objects/     day_range
 │   ├── enums/
-│   ├── repositories/      Protocols: support chats, chat messages, schedules, bot users
-│   └── errors.py
+│   └── business_rule_errors.py
 │
 ├── application/
-│   ├── dto/               export summary, daily report
-│   ├── interfaces/        Protocols for infrastructure/presentation adapters
+│   ├── ports/             ALL Protocols the use cases need from outside, one file per topic:
+│   │                      repositories, delivery (files, notifier, progress), cache, telegram, analysis
+│   ├── dto/               export summary, daily report, analysis results (requests, topics, types)
 │   ├── services/          keyed locks, user timezones, personal data masking
-│   └── use_cases/         manage chats, record messages, export, analyze, auto-export
+│   ├── use_cases/         manage chats, record messages, export, analyze, auto-export
+│   └── user_facing_errors.py
 │
 ├── infrastructure/
-│   ├── persistence/       SQLAlchemy models and repositories (MySQL)
+│   ├── persistence/       SQLAlchemy models, database, mysql_* repositories
 │   ├── cache/             Redis export cache
 │   ├── telegram/bot/      Bot API actions inside a chat (admins, leave)
 │   ├── nlp/               normalization, heuristics, intent model, topic clustering
 │   │   └── resources/     dictionaries, taxonomy.toml, intent_model.npz
 │   ├── security/          message encryption
 │   ├── config/            settings, logging
-│   └── scheduler.py
+│   └── periodic_scheduler.py
 │
 ├── presentation/
 │   └── telegram/
 │       ├── handlers/      private menu, group events
 │       ├── keyboards/
 │       ├── formatters/    JSON export, HTML report
-│       └── …              texts, callbacks, delivery, notifier, progress bar
+│       ├── adapters/      aiogram implementations of application ports (delivery, notifier, progress)
+│       ├── input/         incoming data → our types (aiogram message, typed time)
+│       ├── middlewares/
+│       └── bot_texts.py, callback_data.py, dialog_states.py
 │
 └── main.py                composition root
 
@@ -100,7 +104,9 @@ The domain should be testable with pure Python.
 
 ### Application
 
-Contains use cases and application-specific workflows. A use case orchestrates operations but does not know implementation details. It depends on abstractions (`Protocol`s in `application/interfaces` and `domain/repositories`), not concrete implementations.
+Contains use cases and application-specific workflows. A use case orchestrates operations but does not know implementation details. It depends on abstractions (`Protocol`s in `application/ports`), not concrete implementations.
+
+Every Protocol lives in `application/ports`, including repository interfaces. File names must be unique across the project and say what is inside — prefer several words over a short ambiguous name (`business_rule_errors.py`, `telegram_export_delivery.py`, `mysql_support_chats.py`, `group_chat_events.py`).
 
 The application layer should not know whether the request came from Telegram, HTTP, CLI or tests. Use cases are invoked with plain values (`user_id`, `chat_id`, `date`), never with aiogram objects.
 
@@ -118,7 +124,7 @@ Telegram handlers belong to the presentation layer. Handlers should be thin:
 4. Format the result.
 5. Send the response.
 
-Do not put business logic inside handlers. Convert aiogram objects into domain objects at the boundary (`message_conversion.py`); aiogram types must not go deeper.
+Do not put business logic inside handlers. Convert aiogram objects into domain objects at the boundary (`input/aiogram_message_conversion.py`); aiogram types must not go deeper.
 
 The report formatter (HTML/JSON) and all user-facing texts belong to presentation. Do not generate Telegram-formatted strings inside the domain or application.
 
@@ -281,7 +287,7 @@ Do not make every function async automatically.
 
 # Configuration
 
-Configuration comes from environment variables via `infrastructure/config/settings.py`:
+Configuration comes from environment variables via `infrastructure/config/environment_settings.py`:
 
 ```text
 BOT_TOKEN
@@ -321,9 +327,9 @@ Question analysis completed: requests=45 classified=36 intents=28 other_topics=9
 
 # Error Handling
 
-Infrastructure exceptions are translated into application-level errors (`application/errors.py`, `domain/errors.py`).
+Infrastructure exceptions are translated into application-level errors (`application/user_facing_errors.py`, `domain/business_rule_errors.py`).
 
-Do not leak raw aiogram/SQLAlchemy exceptions to users. Users get understandable messages from `texts.error_text`, for example:
+Do not leak raw aiogram/SQLAlchemy exceptions to users. Users get understandable messages from `bot_texts.error_text`, for example:
 
 ```text
 Сообщения хранятся 7 дней, этот день уже недоступен.
@@ -373,7 +379,7 @@ When implementing a new feature:
 
 1. Identify the business use case.
 2. Define/update domain models if necessary.
-3. Define application interfaces.
+3. Define application ports (Protocols in `application/ports`).
 4. Implement the use case.
 5. Implement infrastructure adapters.
 6. Connect the use case to Telegram handlers.
