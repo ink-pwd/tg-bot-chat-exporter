@@ -1,3 +1,8 @@
+# Рассчитано на сервер с 1 ГБ RAM (+ swap): у каждого контейнера свой лимит памяти.
+# Если контейнер упадёт или превысит лимит, Docker перезапустит только его (restart),
+# остальные продолжат работать. После перезагрузки сервера контейнеры поднимутся сами,
+# если служба docker включена в автозапуск (systemctl enable docker).
+
 # логи stdout в самом Docker тоже ограничиваем, иначе файл растёт бесконечно
 x-logging: &logging
   driver: json-file
@@ -9,14 +14,17 @@ x-database-url: &database-url mysql+aiomysql://${MYSQL_USER}:${MYSQL_PASSWORD}@m
 
 services:
   bot:
-    build:
-      context: .
-      target: base
+    build: .
     env_file: .env
     environment:
       DATABASE_URL: *database-url
       REDIS_URL: redis://redis:6379/0
       LOG_DIR: /app/logs
+      # меньше фрагментации памяти у долго работающего процесса с потоками анализа
+      MALLOC_ARENA_MAX: "2"
+      # на сервере с одним ядром лишние потоки вычислений numpy только мешают
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
     volumes:
       - ./logs:/app/logs
     depends_on:
@@ -25,6 +33,9 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    # ~310–330 МБ в простое (по учёту Docker), анализ большого дня добавляет ~50–70 МБ.
+    # Лимиты — потолок, а не резерв: в сумме они могут быть больше RAM сервера.
+    mem_limit: 550m
     logging: *logging
 
   mysql:
@@ -34,46 +45,48 @@ services:
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      # Урезано под маленький сервер. Данных — сообщения за 7 дней, они целиком
+      # помещаются в буфер 64 МБ, поэтому на скорости это не сказывается.
+      - --innodb-buffer-pool-size=64M
+      - --innodb-log-buffer-size=8M
+      # внутренняя статистика MySQL для диагностики — ~100 МБ памяти, нам не нужна
+      - --performance-schema=OFF
+      # протокол X (MySQL Shell, документное API) не используется
+      - --mysqlx=OFF
+      # бот держит до 15 соединений (пул SQLAlchemy), плюс запас для DBeaver
+      - --max-connections=30
+      - --table-open-cache=400
+      - --skip-name-resolve
     # только для подключения с этой машины (DBeaver и т.п.), из сети недоступно
     ports:
       - "127.0.0.1:${MYSQL_HOST_PORT:-3306}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
-      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
       interval: 5s
       timeout: 5s
       retries: 30
     restart: unless-stopped
+    mem_limit: 400m
     logging: *logging
 
   redis:
     image: redis:8-alpine
+    # в Redis только кеш выгрузок и шаги диалогов, у всех ключей есть срок жизни;
+    # при нехватке памяти вытесняются самые старые из них, а не падает контейнер
+    command: ["redis-server", "--maxmemory", "48mb", "--maxmemory-policy", "volatile-lru"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
     restart: unless-stopped
+    mem_limit: 64m
     logging: *logging
-
-  # docker compose --profile test run --rm tests
-  tests:
-    profiles: ["test"]
-    build:
-      context: .
-      target: test
-    environment:
-      TEST_DATABASE_URL: mysql+aiomysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}_test?charset=utf8mb4
-      # отдельная база Redis, чтобы тесты не задели кеш бота
-      TEST_REDIS_URL: redis://redis:6379/15
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
 
 volumes:
   mysql-data:
