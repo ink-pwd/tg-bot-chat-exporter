@@ -6,8 +6,10 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     LargeBinary,
     String,
+    Text,
     Time,
     func,
 )
@@ -28,37 +30,52 @@ class BotUserModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class TelegramAccountModel(Base):
-    __tablename__ = "telegram_accounts"
+class SupportChatModel(Base):
+    __tablename__ = "support_chats"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # меняется, когда группа становится супергруппой
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, unique=True)
     owner_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("bot_users.id", ondelete="CASCADE"), index=True
     )
-    telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True)
-    display_name: Mapped[str] = mapped_column(String(255))
-    username: Mapped[str | None] = mapped_column(String(64))
-    status: Mapped[str] = mapped_column(String(16))
+    title: Mapped[str] = mapped_column(String(255))
+    chat_type: Mapped[str] = mapped_column(String(16))
+    active: Mapped[bool] = mapped_column(Boolean)
+    # JSON-массив id админов; NULL — список ещё не получали
+    admin_ids: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-
-class TelegramSessionModel(Base):
-    __tablename__ = "telegram_sessions"
-
-    account_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("telegram_accounts.id", ondelete="CASCADE"), primary_key=True
-    )
-    encrypted_session: Mapped[bytes] = mapped_column(LargeBinary)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
 
+class ChatMessageModel(Base):
+    """Текст, имя отправителя и источник пересылки хранятся только в зашифрованном виде."""
+
+    __tablename__ = "chat_messages"
+    __table_args__ = (Index("ix_chat_messages_support_chat_sent", "support_chat_id", "sent_at"),)
+
+    # Telegram id беседы на момент отправки: id сообщений уникальны только внутри неё
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    message_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    support_chat_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("support_chats.id", ondelete="CASCADE")
+    )
+    sender_id: Mapped[int | None] = mapped_column(BigInteger)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, index=True)  # UTC
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime)  # UTC
+    reply_to_id: Mapped[int | None] = mapped_column(BigInteger)
+    media_type: Mapped[str | None] = mapped_column(String(32))
+    action: Mapped[str | None] = mapped_column(String(64))
+    encrypted_content: Mapped[bytes] = mapped_column(LargeBinary)
+
+
 class ExportScheduleModel(Base):
     __tablename__ = "export_schedules"
 
-    account_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("telegram_accounts.id", ondelete="CASCADE"), primary_key=True
+    owner_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("bot_users.id", ondelete="CASCADE"), primary_key=True
     )
     local_time: Mapped[time] = mapped_column(Time)
     enabled: Mapped[bool] = mapped_column(Boolean, index=True)

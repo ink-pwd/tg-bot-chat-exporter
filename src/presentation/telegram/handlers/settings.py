@@ -70,23 +70,19 @@ async def receive_timezone(
 
 
 @router.callback_query(SettingsCallback.filter(F.action == "tz_keep"))
-async def keep_times(callback: CallbackQuery) -> None:
+async def keep_time(callback: CallbackQuery) -> None:
     await callback.answer()
-    await edit_or_answer(callback, texts.TIMEZONE_KEPT, menus.main_menu())
-
-
-@router.callback_query(SettingsCallback.filter(F.action == "tz_change"))
-async def change_times(callback: CallbackQuery, auto_export: ConfigureAutoExport) -> None:
-    await callback.answer()
-    items = await auto_export.list_enabled(callback.from_user.id)
-    await edit_or_answer(callback, texts.CHOOSE_SCHEDULE, menus.scheduled_accounts(items))
+    await edit_or_answer(callback, texts.TIMEZONE_KEPT, menus.settings_menu())
 
 
 async def _after_change(
     user_id: int, timezone: ZoneInfo, auto_export: ConfigureAutoExport
 ) -> tuple[str, InlineKeyboardMarkup]:
-    """Если есть автовыгрузки — спрашиваем, менять ли их время под новый пояс."""
-    items = await auto_export.list_enabled(user_id)
-    if not items:
+    """Если автовыгрузка включена — спрашиваем, менять ли её время под новый пояс."""
+    schedule = await auto_export.get(user_id)
+    if not schedule.enabled:
         return texts.timezone_changed(timezone), menus.settings_menu()
-    return texts.ask_change_schedule_times(timezone, items), menus.schedule_times_after_timezone_change()
+    return (
+        texts.ask_change_schedule_time(timezone, schedule),
+        menus.schedule_time_after_timezone_change(),
+    )

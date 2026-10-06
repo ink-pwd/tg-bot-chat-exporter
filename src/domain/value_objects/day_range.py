@@ -25,9 +25,6 @@ class DayRange:
             self.day + timedelta(days=1), time.min, tzinfo=self.timezone
         ).astimezone(UTC)
 
-    def contains(self, moment: datetime) -> bool:
-        return self.start <= moment < self.end
-
     @classmethod
     def today(cls, now: datetime, timezone: ZoneInfo) -> "DayRange":
         return cls(now.astimezone(timezone).date(), timezone)

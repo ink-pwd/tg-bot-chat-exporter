@@ -1,12 +1,15 @@
 import logging
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
+from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart, ExceptionTypeFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, ErrorEvent, Message
+from aiogram.types import CallbackQuery, ErrorEvent, InlineKeyboardMarkup, Message
 
-from application.errors import ApplicationError, LoginNotStarted
+from application.errors import ApplicationError
+from application.use_cases.configure_auto_export import ConfigureAutoExport
+from application.use_cases.manage_support_chats import ManageSupportChats
 from domain.errors import DomainError
 from presentation.telegram import texts
 from presentation.telegram.callbacks import MenuCallback
@@ -17,30 +20,45 @@ router = Router(name="common")
 
 
 @router.message(CommandStart())
-async def start(message: Message, state: FSMContext) -> None:
+@router.message(Command("cancel"))
+async def start(
+    message: Message,
+    state: FSMContext,
+    bot: Bot,
+    chats: ManageSupportChats,
+    auto_export: ConfigureAutoExport,
+) -> None:
     await state.clear()
-    await message.answer(texts.MAIN_MENU, reply_markup=menus.main_menu())
+    text, markup = await main_menu_view(message.from_user.id, bot, chats, auto_export)
+    await message.answer(text, reply_markup=markup)
 
 
 @router.callback_query(MenuCallback.filter(F.action == "main"))
-async def main_menu(callback: CallbackQuery, state: FSMContext) -> None:
+async def main_menu(
+    callback: CallbackQuery,
+    state: FSMContext,
+    bot: Bot,
+    chats: ManageSupportChats,
+    auto_export: ConfigureAutoExport,
+) -> None:
     await state.clear()
     await callback.answer()
-    await edit_or_answer(callback, texts.MAIN_MENU, menus.main_menu())
+    text, markup = await main_menu_view(callback.from_user.id, bot, chats, auto_export)
+    await edit_or_answer(callback, text, markup)
 
 
-@router.message(Command("cancel"))
-async def cancel(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await message.answer(texts.MAIN_MENU, reply_markup=menus.main_menu())
+async def main_menu_view(
+    user_id: int, bot: Bot, chats: ManageSupportChats, auto_export: ConfigureAutoExport
+) -> tuple[str, InlineKeyboardMarkup]:
+    owned = await chats.list(user_id)
+    schedule = await auto_export.get(user_id)
+    me = await bot.me()
+    return texts.main_menu(owned), menus.main_menu(owned, schedule, me.username)
 
 
 @router.errors(ExceptionTypeFilter(ApplicationError, DomainError))
-async def user_error(event: ErrorEvent, **data) -> None:
-    exc = event.exception
-    if isinstance(exc, LoginNotStarted) and (state := data.get("state")) is not None:
-        await state.clear()
-    await reply_to_update(event, texts.error_text(exc) or texts.UNEXPECTED_ERROR)
+async def user_error(event: ErrorEvent) -> None:
+    await reply_to_update(event, texts.error_text(event.exception) or texts.UNEXPECTED_ERROR)
 
 
 @router.errors()
@@ -50,6 +68,7 @@ async def unexpected_error(event: ErrorEvent) -> None:
 
 
 async def reply_to_update(event: ErrorEvent, text: str) -> None:
+    """Отвечает только в личном чате: в беседе с клиентами бот молчит."""
     update = event.update
     try:
         if (callback := update.callback_query) is not None:
@@ -58,16 +77,16 @@ async def reply_to_update(event: ErrorEvent, text: str) -> None:
                 return
             except TelegramBadRequest:
                 # на callback уже ответили (долгий сценарий) — пишем сообщением
-                if callback.message is not None:
+                if callback.message is not None and callback.message.chat.type == ChatType.PRIVATE:
                     await callback.message.answer(text)
-        elif update.message is not None:
+        elif update.message is not None and update.message.chat.type == ChatType.PRIVATE:
             await update.message.answer(text)
     except Exception:
         logger.warning("Failed to deliver error message", exc_info=True)
 
 
 async def edit_or_answer(callback: CallbackQuery, text: str, reply_markup=None) -> None:
-    """Редактирует сообщение с кнопками, а если нельзя (фото, старое) — шлёт новое."""
+    """Редактирует сообщение с кнопками, а если нельзя (старое, не текст) — шлёт новое."""
     message = callback.message
     if message is not None and message.text is not None:
         try:

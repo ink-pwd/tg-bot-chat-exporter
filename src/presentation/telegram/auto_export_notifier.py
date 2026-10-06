@@ -5,7 +5,6 @@ from aiogram import Bot
 
 from application.dto.export import ExportSummary
 from application.errors import ApplicationError
-from domain.entities.telegram_account import TelegramAccount
 from domain.errors import DomainError
 from presentation.telegram import texts
 from presentation.telegram.keyboards import menus
@@ -22,18 +21,13 @@ class AiogramAutoExportNotifier:
             user_id, texts.auto_export_completed_note(summary.day.day, summary.messages_count)
         )
 
-    async def account_revoked(self, user_id: int, account: TelegramAccount) -> None:
-        await self._send(user_id, texts.auto_export_revoked(account))
-
-    async def failed(
-        self, user_id: int, account: TelegramAccount, day: date, error: ApplicationError | DomainError
-    ) -> None:
+    async def failed(self, user_id: int, day: date, error: ApplicationError | DomainError) -> None:
         reason = texts.error_text(error) or texts.UNEXPECTED_ERROR
-        await self._send(user_id, texts.auto_export_failed(account, day, reason))
+        await self._send(user_id, texts.auto_export_failed(day, reason))
 
     async def _send(self, user_id: int, text: str) -> None:
         try:
-            await self._bot.send_message(user_id, text, reply_markup=menus.main_menu())
+            await self._bot.send_message(user_id, text, reply_markup=menus.back_to_main())
         except Exception:
             # уведомление не критично: о блокировке бота узнаем при отправке файла
             logger.warning("Auto export notification not delivered: user=%s", user_id, exc_info=True)

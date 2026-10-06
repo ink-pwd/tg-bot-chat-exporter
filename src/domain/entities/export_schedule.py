@@ -7,7 +7,6 @@ from zoneinfo import ZoneInfo
 class ExportSchedule:
     """Ежедневная автовыгрузка закончившегося дня в local_time по поясу владельца."""
 
-    account_id: int
     owner_id: int
     local_time: time
     enabled: bool
@@ -54,9 +53,6 @@ class ExportSchedule:
     def disabled(self) -> "ExportSchedule":
         return replace(self, enabled=False)
 
-    def completed(self, day: date) -> "ExportSchedule":
-        return replace(self, last_run_day=day)
-
     @classmethod
-    def new(cls, account_id: int, owner_id: int) -> "ExportSchedule":
-        return cls(account_id, owner_id, time(8, 0), enabled=False, last_run_day=None)
+    def new(cls, owner_id: int) -> "ExportSchedule":
+        return cls(owner_id, time(8, 0), enabled=False, last_run_day=None)

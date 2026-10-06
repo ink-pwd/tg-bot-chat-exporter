@@ -9,9 +9,7 @@ from application.interfaces.auto_export_notifier import AutoExportNotifier
 from application.services.user_timezones import UserTimezones
 from application.use_cases.export_daily_conversations import ExportDailyConversations
 from domain.entities.export_schedule import ExportSchedule
-from domain.errors import AccountNotFound, AccountRevoked
 from domain.repositories.export_schedule_repository import ExportScheduleRepository
-from domain.repositories.telegram_account_repository import TelegramAccountRepository
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +33,12 @@ class RunAutoExports:
     def __init__(
         self,
         schedules: ExportScheduleRepository,
-        accounts: TelegramAccountRepository,
         timezones: UserTimezones,
         export: ExportDailyConversations,
         notifier: AutoExportNotifier,
         clock: Callable[[], datetime],
     ) -> None:
         self._schedules = schedules
-        self._accounts = accounts
         self._timezones = timezones
         self._export = export
         self._notifier = notifier
@@ -57,28 +53,21 @@ class RunAutoExports:
             day = schedule.due_day(now, timezone)
             if day is None:
                 continue
-            attempts = self._attempts.get((schedule.account_id, day))
+            attempts = self._attempts.get((schedule.owner_id, day))
             if attempts is not None and attempts.retry_at > now:
                 continue
             jobs.append(self._run(schedule, day))
-        # параллельность ограничена шлюзом выгрузки (EXPORT_CONCURRENCY)
+        # параллельность ограничена самой выгрузкой (EXPORT_CONCURRENCY)
         await asyncio.gather(*jobs)
 
     async def _run(self, schedule: ExportSchedule, day: date) -> None:
-        account_id, owner_id = schedule.account_id, schedule.owner_id
-        logger.info("Auto export started: account=%s day=%s", account_id, day)
+        owner_id = schedule.owner_id
+        logger.info("Auto export started: user=%s day=%s", owner_id, day)
         try:
-            summary = await self._export.execute(owner_id, account_id, day)
-        except AccountNotFound:
-            return  # аккаунт отключили — расписание удалено вместе с ним
-        except AccountRevoked:
-            await self._schedules.disable(account_id)
-            if account := await self._accounts.get_owned(account_id, owner_id):
-                await self._notifier.account_revoked(owner_id, account)
-            return
+            summary = await self._export.execute(owner_id, day)
         except RecipientUnavailable:
-            logger.warning("Auto exports disabled, bot is blocked: user=%s", owner_id)
-            await self._schedules.disable_all_owned(owner_id)
+            logger.warning("Auto export disabled, bot is blocked: user=%s", owner_id)
+            await self._schedules.disable(owner_id)
             return
         except ExportTooLarge as exc:
             await self._give_up(schedule, day, exc)
@@ -87,16 +76,16 @@ class RunAutoExports:
             await self._retry_later(schedule, day, exc)
             return
 
-        self._attempts.pop((account_id, day), None)
-        await self._schedules.mark_done(account_id, day)
+        self._attempts.pop((owner_id, day), None)
+        await self._schedules.mark_done(owner_id, day)
         await self._notifier.completed(owner_id, summary)
-        logger.info("Auto export completed: account=%s day=%s", account_id, day)
+        logger.info("Auto export completed: user=%s day=%s", owner_id, day)
 
     async def _retry_later(self, schedule: ExportSchedule, day: date, exc: Exception) -> None:
-        key = (schedule.account_id, day)
+        key = (schedule.owner_id, day)
         count = self._attempts[key].count + 1 if key in self._attempts else 1
         if not isinstance(exc, ApplicationError):
-            logger.error("Auto export crashed: account=%s", schedule.account_id, exc_info=exc)
+            logger.error("Auto export crashed: user=%s", schedule.owner_id, exc_info=exc)
         if count >= MAX_ATTEMPTS:
             await self._give_up(schedule, day, exc)
             return
@@ -105,23 +94,22 @@ class RunAutoExports:
             delay = max(delay, timedelta(seconds=exc.retry_after_seconds))
         self._attempts[key] = _Attempts(count, self._clock() + delay)
         logger.warning(
-            "Auto export failed, will retry: account=%s day=%s attempt=%s error=%s",
-            schedule.account_id,
+            "Auto export failed, will retry: user=%s day=%s attempt=%s error=%s",
+            schedule.owner_id,
             day,
             count,
             type(exc).__name__,
         )
 
     async def _give_up(self, schedule: ExportSchedule, day: date, exc: Exception) -> None:
-        self._attempts.pop((schedule.account_id, day), None)
+        self._attempts.pop((schedule.owner_id, day), None)
         # день помечается выполненным, чтобы не повторять бесконечно; вручную выгрузить можно
-        await self._schedules.mark_done(schedule.account_id, day)
+        await self._schedules.mark_done(schedule.owner_id, day)
         logger.error(
-            "Auto export gave up: account=%s day=%s error=%s",
-            schedule.account_id,
+            "Auto export gave up: user=%s day=%s error=%s",
+            schedule.owner_id,
             day,
             type(exc).__name__,
         )
-        if account := await self._accounts.get_owned(schedule.account_id, schedule.owner_id):
-            error = exc if isinstance(exc, ApplicationError) else ApplicationError()
-            await self._notifier.failed(schedule.owner_id, account, day, error)
+        error = exc if isinstance(exc, ApplicationError) else ApplicationError()
+        await self._notifier.failed(schedule.owner_id, day, error)

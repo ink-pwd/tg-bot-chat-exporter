@@ -1,16 +1,16 @@
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
 
-class SessionDecryptionError(Exception):
-    """Сессию не удалось расшифровать: ключ сменился или данные повреждены."""
+class MessageDecryptionError(Exception):
+    """Данные не удалось расшифровать: ключ сменился или данные повреждены."""
 
 
-class SessionCipher:
-    """Шифрование сессий Fernet.
+class MessageCipher:
+    """Шифрование содержимого сообщений Fernet.
 
-    Ключей может быть несколько (через запятую в SESSION_ENCRYPTION_KEY):
+    Ключей может быть несколько (через запятую в MESSAGE_ENCRYPTION_KEY):
     шифруется первым, расшифровывается любым — так ключ можно сменить,
-    не теряя уже сохранённые сессии.
+    не теряя уже сохранённые сообщения.
     """
 
     def __init__(self, keys: tuple[str, ...]) -> None:
@@ -25,8 +25,4 @@ class SessionCipher:
         try:
             return self._fernet.decrypt(token).decode()
         except InvalidToken:
-            raise SessionDecryptionError() from None
-
-    @staticmethod
-    def generate_key() -> str:
-        return Fernet.generate_key().decode()
+            raise MessageDecryptionError() from None
