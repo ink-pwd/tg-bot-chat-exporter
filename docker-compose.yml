@@ -15,6 +15,9 @@ x-database-url: &database-url mysql+aiomysql://${MYSQL_USER}:${MYSQL_PASSWORD}@m
 services:
   bot:
     build: .
+    # фиксированное имя: образ можно собрать на другой машине и перенести на сервер
+    # (docker save | docker load), а там запустить без сборки: up -d --no-build
+    image: tg-exporter-bot:latest
     env_file: .env
     environment:
       DATABASE_URL: *database-url
