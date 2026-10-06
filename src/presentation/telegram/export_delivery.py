@@ -1,5 +1,4 @@
 import gzip
-import re
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
@@ -9,7 +8,6 @@ from application.dto.export import CachedExport
 from application.dto.report import DailyQuestionReport
 from application.errors import CachedFileUnavailable, ExportTooLarge, RecipientUnavailable
 from domain.entities.daily_conversation_export import DailyConversationExport
-from domain.entities.telegram_account import TelegramAccount
 from domain.value_objects.day_range import DayRange
 from presentation.telegram import texts
 from presentation.telegram.formatters.export_json import render_export_json
@@ -19,8 +17,6 @@ from presentation.telegram.formatters.report_html import render_report_html
 MAX_UPLOAD_BYTES = 49 * 1024 * 1024
 # крупнее — отправляем сжатым
 COMPRESS_FROM_BYTES = 20 * 1024 * 1024
-
-_UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
 class AiogramExportDelivery:
@@ -44,22 +40,15 @@ class AiogramExportDelivery:
         if report is not None:
             files.append(self.prepare_report(export, report))
         caption = texts.export_caption(
-            export.profile.display_name,
-            export.day.day,
-            export.conversations_count,
-            export.messages_count,
+            export.day.day, export.conversations_count, export.messages_count
         )
         messages = await self._send_files(
             user_id, [BufferedInputFile(content, filename=name) for content, name in files], caption
         )
         return [message.document.file_id for message in messages]
 
-    async def resend(
-        self, user_id: int, account: TelegramAccount, day: DayRange, cached: CachedExport
-    ) -> None:
-        caption = texts.export_caption(
-            account.display_name, day.day, cached.conversations_count, cached.messages_count
-        )
+    async def resend(self, user_id: int, day: DayRange, cached: CachedExport) -> None:
+        caption = texts.export_caption(day.day, cached.conversations_count, cached.messages_count)
         try:
             await self._send_files(user_id, list(cached.file_ids), caption)
         except TelegramBadRequest as exc:
@@ -85,18 +74,14 @@ class AiogramExportDelivery:
         content = render_report_html(report)
         if len(content) > self._max_upload_bytes:
             raise ExportTooLarge()
-        return content, f"{_account_slug(export)}_{export.day.day.isoformat()}_report.html"
+        return content, f"support_{export.day.day.isoformat()}_report.html"
 
     def prepare_file(self, export: DailyConversationExport) -> tuple[bytes, str]:
         content = render_export_json(export)
-        filename = f"{_account_slug(export)}_{export.day.day.isoformat()}.json"
+        filename = f"support_{export.day.day.isoformat()}.json"
         if len(content) >= self._compress_from_bytes:
             content, filename = gzip.compress(content), filename + ".gz"
         if len(content) > self._max_upload_bytes:
             raise ExportTooLarge()
         return content, filename
 
-
-def _account_slug(export: DailyConversationExport) -> str:
-    name = export.profile.username or str(export.profile.telegram_user_id)
-    return _UNSAFE_FILENAME_CHARS.sub("_", name)

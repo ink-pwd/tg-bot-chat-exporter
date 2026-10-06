@@ -3,63 +3,22 @@ from datetime import date, datetime
 from html import escape
 from zoneinfo import ZoneInfo
 
-from application.dto.login import CodeDelivery, CodeSent
-from application.errors import (
-    CodeExpired,
-    ExportTooLarge,
-    CodeResendUnavailable,
-    InvalidCode,
-    InvalidPassword,
-    LoginNotStarted,
-    PhoneNumberRejected,
-    TelegramUnavailable,
-    TooManyAttempts,
-)
+from application.errors import ExportTooLarge, TelegramUnavailable, TooManyAttempts
+from application.interfaces.export_progress import ExportStage
 from domain.entities.export_schedule import ExportSchedule
-from domain.entities.telegram_account import TelegramAccount
-from domain.enums.account_status import AccountStatus
-from domain.errors import (
-    AccountNotFound,
-    AccountOwnedByAnotherUser,
-    AccountRevoked,
-    InvalidExportDay,
-    InvalidPhoneNumber,
-    InvalidTimezone,
-)
+from domain.entities.support_chat import SupportChat
+from domain.errors import ChatNotFound, ExportDayTooOld, InvalidExportDay, InvalidTimezone
 
-MAIN_MENU = (
-    "Выгрузка переписок Telegram за день в JSON.\n\n"
-    "Подключите аккаунт, чтобы выгружать его переписки."
+HOW_TO_CONNECT = (
+    "Добавьте бота в беседу кнопкой «➕ Добавить в беседу». С этого момента бот сохраняет "
+    "её сообщения: прочитать историю до своего добавления бот не может.\n\n"
+    "Беседу и её выгрузки видит только тот, кто добавил бота. В самой беседе бот ничего не пишет."
 )
-NO_ACCOUNTS = "Подключённых аккаунтов пока нет."
-ACCOUNTS = "Ваши аккаунты:"
-LOGIN_METHODS = (
-    "Как подключить аккаунт?\n\n"
-    "<b>QR-код</b> — быстрее всего: отсканируйте его в Telegram на телефоне "
-    "(«Настройки → Устройства → Подключить устройство»).\n\n"
-    "<b>По номеру телефона</b> — код подтверждения введёте кнопками."
-)
-QR_CAPTION = (
-    "Отсканируйте QR-код в Telegram на телефоне:\n"
-    "«Настройки → Устройства → Подключить устройство».\n\n"
-    "Код обновляется автоматически."
-)
-QR_EXPIRED = "Время на вход по QR-коду вышло. Попробуйте ещё раз."
-ASK_PHONE = "Отправьте номер телефона аккаунта в международном формате, например <code>+380501234567</code>."
-ASK_PASSWORD = (
-    "На аккаунте включена двухэтапная проверка.\n\n"
-    "Отправьте пароль сообщением — бот сразу удалит его из чата."
-)
-CODE_AS_MESSAGE = (
-    "Код нужно вводить кнопками под сообщением с кодом. Если вы отправили код "
-    "сообщением, Telegram мог его аннулировать — нажмите «Отправить код повторно»."
-)
-PASSWORD_DELETE_HINT = "Не удалось удалить сообщение с паролем — удалите его вручную."
-LOGIN_CANCELLED = "Вход отменён."
-LOGIN_EXPIRED = "Вход не найден или устарел. Начните заново."
-ASK_DATE = (
-    "За какой день выгрузить переписки?\n\n"
-    "Отправьте дату, например <code>04.10</code> или <code>2026-10-04</code>."
+NO_CHATS = "Подключённых бесед пока нет.\n\n" + HOW_TO_CONNECT
+CHATS = "Ваши беседы:"
+CHOOSE_DAY = (
+    "📥 За какой день выгрузить переписки?\n\n"
+    "Сообщения хранятся 7 дней, поэтому доступны сегодня и шесть предыдущих дней."
 )
 ASK_TIMEZONE = (
     "Выберите часовой пояс или отправьте его название в формате IANA, "
@@ -68,50 +27,74 @@ ASK_TIMEZONE = (
 ASK_SCHEDULE_TIME = "Отправьте время автовыгрузки, например <code>07:45</code>."
 INVALID_TIME = "Не понял время. Пример: <code>07:45</code>."
 TIMEZONE_KEPT = "Хорошо, время автовыгрузки не меняется."
-CHOOSE_SCHEDULE = "Время какого аккаунта изменить?"
-INVALID_DATE = "Не понял дату. Пример: <code>04.10</code> или <code>2026-10-04</code>."
 UNEXPECTED_ERROR = "Что-то пошло не так. Попробуйте ещё раз позже."
-
-_DELIVERY = {
-    CodeDelivery.APP: "в приложение Telegram (чат «Telegram» на другом вашем устройстве)",
-    CodeDelivery.SMS: "по SMS",
-    CodeDelivery.CALL: "звонком — код продиктуют",
-    CodeDelivery.FLASH_CALL: "сбросом звонка — код это последние цифры номера",
-    CodeDelivery.MISSED_CALL: "пропущенным звонком — код это последние цифры номера",
-    CodeDelivery.EMAIL: "на почту, привязанную к аккаунту",
-    CodeDelivery.FRAGMENT: "через Fragment",
-    CodeDelivery.OTHER: "",
-}
+CHAT_REJECTED = "У вас нет доступа к этому боту, поэтому он вышел из беседы."
+PRIVACY_WARNING = (
+    "⚠️ Сейчас бот видит в беседе только команды. Чтобы он сохранял все сообщения, "
+    "сделайте его администратором беседы или выключите privacy mode в @BotFather "
+    "(<code>/setprivacy</code> → Disable), а затем добавьте бота в беседу заново."
+)
 
 
-def code_prompt(sent: CodeSent, entered: int, notice: str | None = None) -> str:
-    where = _DELIVERY[sent.delivery]
-    lines = [f"Код отправлен {where}." if where else "Код отправлен."]
-    lines.append("Введите его кнопками ниже — не отправляйте код сообщением, Telegram его аннулирует.")
-    if notice:
-        lines += ["", notice]
-    total = sent.length or max(entered, 5)
-    lines += ["", "Код: " + " ".join("●" if i < entered else "○" for i in range(total))]
-    return "\n".join(lines)
+def main_menu(chats: list[SupportChat]) -> str:
+    active = sum(1 for chat in chats if chat.active)
+    text = "Выгрузка переписок из бесед поддержки за день: JSON и HTML-отчёт.\n\n"
+    if not chats:
+        return text + HOW_TO_CONNECT
+    return text + f"Подключено бесед: <b>{active}</b>. Выгрузка собирает все ваши беседы в один файл."
+
+
+_WEEKDAYS = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 
 
 def format_day(day: date) -> str:
     return day.strftime("%d.%m.%Y")
 
 
-def export_started(day: date) -> str:
-    return f"⏳ Выгружаю переписки за {format_day(day)}…\nНа больших аккаунтах это может занять несколько минут."
+def day_button(day: date, today: date) -> str:
+    if day == today:
+        name = "Сегодня"
+    elif (today - day).days == 1:
+        name = "Вчера"
+    else:
+        name = _WEEKDAYS[day.weekday()]
+    return f"{name}, {day:%d.%m}"
 
 
-def export_caption(account_name: str, day: date, conversations: int, messages: int) -> str:
+def nothing_recorded(day: date) -> str:
     return (
-        f"📦 <b>{escape(account_name)}</b> — {format_day(day)}\n"
-        f"Чатов: {conversations}, сообщений: {messages}"
+        f"За {format_day(day)} сообщений из ваших бесед ещё не зафиксировано, "
+        "выгружать нечего.\n\n"
+        "Бот сохраняет сообщения только с момента, когда его добавили в беседу."
     )
 
 
+_STAGES = {
+    ExportStage.COLLECTING: "Собираю сообщения бесед",
+    ExportStage.ANALYZING: "Анализирую обращения и время ответа",
+    ExportStage.SENDING: "Формирую и отправляю файлы",
+}
+_BAR_CELLS = 12
+
+
+def export_progress(day: date, stage: ExportStage | None) -> str:
+    """⏳ Выгрузка за 06.10.2026 / ▰▰▰▰▰▰▰▰▱▱▱▱ 2/3 / Анализирую обращения…"""
+    total = len(ExportStage)
+    # текущий этап закрашен наполовину: полная шкала была бы обманом, пока файлы не ушли
+    done = 0.0 if stage is None else stage.value - 0.5
+    filled = round(_BAR_CELLS * done / total)
+    step = f"{stage.value}/{total} · {_STAGES[stage]}…" if stage else "Начинаю…"
+    return (
+        f"⏳ Выгрузка за {format_day(day)}\n"
+        f"{'▰' * filled}{'▱' * (_BAR_CELLS - filled)}\n{step}"
+    )
+
+
+def export_caption(day: date, conversations: int, messages: int) -> str:
+    return f"📦 <b>Беседы поддержки</b> — {format_day(day)}\nЧатов: {conversations}, сообщений: {messages}"
+
+
 def export_summary(
-    account_name: str,
     day: date,
     conversations: int,
     messages: int,
@@ -120,9 +103,8 @@ def export_summary(
     timezone: ZoneInfo,
 ) -> str:
     if messages == 0:
-        text = f"За {format_day(day)} в аккаунте <b>{escape(account_name)}</b> сообщений нет."
-    else:
-        text = f"✅ Готово: чатов {conversations}, сообщений {messages}."
+        return nothing_recorded(day)
+    text = f"✅ Готово: чатов {conversations}, сообщений {messages}."
     if from_cache:
         text += f"\nДанные на {exported_at.astimezone(timezone):%H:%M} (из кеша)."
     return text
@@ -156,114 +138,83 @@ def timezone_changed(timezone: ZoneInfo) -> str:
     return f"✅ Часовой пояс: <b>{timezone_label(timezone)}</b>."
 
 
-def ask_change_schedule_times(
-    timezone: ZoneInfo, items: list[tuple[TelegramAccount, ExportSchedule]]
-) -> str:
-    lines = [timezone_changed(timezone), "", "Автовыгрузки теперь идут по новому поясу:"]
-    lines += [f"• {escape(account.display_name)} — {schedule.local_time:%H:%M}" for account, schedule in items]
-    lines += ["", "Изменить время?"]
-    return "\n".join(lines)
+def ask_change_schedule_time(timezone: ZoneInfo, schedule: ExportSchedule) -> str:
+    return (
+        f"{timezone_changed(timezone)}\n\n"
+        f"Автовыгрузка теперь идёт в {schedule.local_time:%H:%M} по новому поясу. Изменить время?"
+    )
 
 
-def auto_export(account: TelegramAccount, schedule: ExportSchedule, timezone: ZoneInfo) -> str:
+def auto_export(schedule: ExportSchedule, timezone: ZoneInfo) -> str:
     status = (
         f"включена, каждый день в <b>{schedule.local_time:%H:%M}</b>"
         if schedule.enabled
         else "<b>выключена</b>"
     )
     return (
-        f"⏰ Автовыгрузка <b>{escape(account.display_name)}</b>: {status}.\n\n"
-        "В выбранное время бот пришлёт выгрузку за прошедший день. "
-        f"Часовой пояс: {timezone_label(timezone)} — сменить можно в «Настройках».\n\n"
+        f"⏰ Автовыгрузка: {status}.\n\n"
+        "В выбранное время бот пришлёт выгрузку всех ваших бесед за прошедший день. "
+        f"Часовой пояс: {timezone_label(timezone)}, сменить его можно в «Настройках».\n\n"
         "Выберите время:"
     )
 
 
 def auto_export_completed_note(day: date, messages: int) -> str:
     if messages == 0:
-        return f"⏰ Автовыгрузка: за {format_day(day)} сообщений нет."
+        return f"⏰ Автовыгрузка за {format_day(day)}: сообщений из ваших бесед не зафиксировано."
     return f"⏰ Автовыгрузка за {format_day(day)} выполнена."
 
 
-def auto_export_revoked(account: TelegramAccount) -> str:
+def auto_export_failed(day: date, reason: str) -> str:
     return (
-        f"⚠️ Автовыгрузка <b>{escape(account.display_name)}</b> выключена: "
-        "сессия аккаунта завершена в Telegram. Подключите аккаунт заново и включите автовыгрузку."
+        f"❌ Не удалось выполнить автовыгрузку за {format_day(day)}.\n{reason}\n\n"
+        "Этот день можно выгрузить вручную: «📥 Выгрузить» в главном меню."
     )
 
 
-def auto_export_failed(account: TelegramAccount, day: date, reason: str) -> str:
+def chat_connected(chat: SupportChat, can_read_all: bool) -> str:
+    text = (
+        f"✅ Беседа <b>{escape(chat.title)}</b> подключена. Бот сохраняет её сообщения "
+        "начиная с этого момента. Выгрузки доступны только вам."
+    )
+    return text if can_read_all else f"{text}\n\n{PRIVACY_WARNING}"
+
+
+def chat_card(chat: SupportChat) -> str:
+    status = "✅ бот в беседе, сообщения сохраняются" if chat.active else "⚠️ бота удалили из беседы"
     return (
-        f"❌ Не удалось выполнить автовыгрузку <b>{escape(account.display_name)}</b> "
-        f"за {format_day(day)}.\n{reason}\n\nМожно выгрузить этот день вручную из карточки аккаунта."
+        f"<b>{escape(chat.title)}</b>\n{status}\n\n"
+        "Поддержкой в отчёте считаются администраторы беседы и вы, клиентами — остальные участники."
     )
 
 
-def account_connected(account: TelegramAccount) -> str:
-    return f"✅ Аккаунт <b>{escape(account.display_name)}</b> подключён."
-
-
-def account_card(account: TelegramAccount, schedule: ExportSchedule, timezone: ZoneInfo) -> str:
-    lines = [f"<b>{escape(account.display_name)}</b>"]
-    if account.username:
-        lines.append(f"@{escape(account.username)}")
-    if schedule.enabled and account.status is AccountStatus.ACTIVE:
-        lines += ["", f"⏰ Автовыгрузка каждый день в {schedule.local_time:%H:%M} ({timezone_label(timezone)})"]
-    if account.status is AccountStatus.REVOKED:
-        lines += ["", "⚠️ Сессия завершена в Telegram. Подключите аккаунт заново."]
-    return "\n".join(lines)
-
-
-def logout_confirm(account: TelegramAccount) -> str:
+def disconnect_confirm(chat: SupportChat) -> str:
     return (
-        f"Отключить аккаунт <b>{escape(account.display_name)}</b>?\n\n"
-        "Сессия бота будет завершена, выгрузки станут недоступны до повторного подключения."
+        f"Отключить беседу <b>{escape(chat.title)}</b>?\n\n"
+        "Бот выйдет из неё и удалит все сохранённые сообщения этой беседы. Отменить это нельзя."
     )
 
 
-def account_logged_out() -> str:
-    return "Аккаунт отключён."
+CHAT_DISCONNECTED = "Беседа отключена, её сообщения удалены."
 
 
 def error_text(exc: Exception) -> str | None:
     """Текст для пользователя или None, если ошибка неожиданная."""
     match exc:
-        case AccountNotFound():
-            return "Аккаунт не найден."
-        case AccountRevoked():
-            return (
-                "Сессия аккаунта завершена в Telegram (например, из «Устройств»). "
-                "Подключите аккаунт заново."
-            )
+        case ChatNotFound():
+            return "Беседа не найдена."
         case InvalidTimezone():
             return "Не знаю такого часового пояса. Пример: <code>Europe/Lisbon</code>."
         case InvalidExportDay():
             return "Этот день ещё не наступил."
+        case ExportDayTooOld():
+            return "Сообщения хранятся 7 дней, этот день уже недоступен."
         case ExportTooLarge():
             return "Выгрузка за этот день слишком большая для отправки через Telegram."
-        case AccountOwnedByAnotherUser():
-            return "Этот Telegram-аккаунт уже подключён другим пользователем бота."
-        case InvalidPhoneNumber():
-            return "Не похоже на номер телефона. Пример: <code>+380501234567</code>."
-        case PhoneNumberRejected():
-            return "Telegram не принял этот номер. Проверьте его и попробуйте ещё раз."
-        case InvalidCode():
-            return "Неверный код, попробуйте ещё раз."
-        case CodeExpired():
-            return "Код истёк. Нажмите «Отправить код повторно»."
-        case CodeResendUnavailable():
-            return (
-                "Telegram исчерпал способы отправки кода. Дождитесь уже отправленного "
-                "кода или попробуйте через 12–24 часа."
-            )
-        case InvalidPassword():
-            return "Неверный пароль, попробуйте ещё раз."
         case TooManyAttempts(retry_after_seconds=seconds) if seconds:
-            return f"Слишком много попыток. Попробуйте через {_duration(seconds)}."
+            return f"Telegram просит подождать. Попробуйте через {_duration(seconds)}."
         case TooManyAttempts():
-            return "Слишком много попыток. Попробуйте позже."
-        case LoginNotStarted():
-            return LOGIN_EXPIRED
+            return "Telegram просит подождать. Попробуйте позже."
         case TelegramUnavailable():
             return "Telegram сейчас недоступен. Попробуйте ещё раз позже."
     return None

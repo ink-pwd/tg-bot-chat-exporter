@@ -3,12 +3,11 @@ from typing import Protocol
 from application.dto.export import CachedExport
 from application.dto.report import DailyQuestionReport
 from domain.entities.daily_conversation_export import DailyConversationExport
-from domain.entities.telegram_account import TelegramAccount
 from domain.value_objects.day_range import DayRange
 
 
 class ExportDelivery(Protocol):
-    """Доставка файла выгрузки пользователю."""
+    """Доставка файла выгрузки пользователю в личный чат с ботом."""
 
     async def send(
         self, user_id: int, export: DailyConversationExport, report: DailyQuestionReport | None
@@ -21,8 +20,6 @@ class ExportDelivery(Protocol):
         """
         ...
 
-    async def resend(
-        self, user_id: int, account: TelegramAccount, day: DayRange, cached: CachedExport
-    ) -> None:
+    async def resend(self, user_id: int, day: DayRange, cached: CachedExport) -> None:
         """Raises: CachedFileUnavailable, RecipientUnavailable."""
         ...

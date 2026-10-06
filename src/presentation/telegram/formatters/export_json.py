@@ -1,4 +1,4 @@
-"""JSON-файл выгрузки. Формат тот же, что у прежнего export.py (плюс поле timezone)."""
+"""JSON-файл выгрузки: все беседы пользователя за день."""
 import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -12,12 +12,7 @@ def render_export_json(export: DailyConversationExport) -> bytes:
     document = {
         "date": export.day.day.isoformat(),
         "timezone": tz.key,
-        "account": {
-            "id": export.profile.telegram_user_id,
-            "name": export.profile.display_name,
-            "username": export.profile.username,
-            "phone": export.phone,
-        },
+        "owner_id": export.owner_id,
         "exported_at": _local(export.exported_at, tz),
         "chats": [
             {
@@ -39,7 +34,7 @@ def _message(message: SupportMessage, tz: ZoneInfo) -> dict:
         "edit_date": _local(message.edited_at, tz) if message.edited_at else None,
         "from_id": message.sender_id,
         "from": message.sender_name,
-        "out": message.is_outgoing,
+        "from_support": message.from_support,
         "text": message.text,
         "reply_to": message.reply_to_id,
         "forwarded_from": message.forwarded_from,

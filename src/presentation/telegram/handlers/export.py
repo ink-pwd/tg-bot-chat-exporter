@@ -1,90 +1,67 @@
 import contextlib
-from datetime import date, timedelta
+from datetime import date
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from application.use_cases.export_daily_conversations import ExportDailyConversations
 from presentation.telegram import texts
 from presentation.telegram.callbacks import ExportCallback
-from presentation.telegram.date_input import parse_day
+from presentation.telegram.export_progress import MessageExportProgress
 from presentation.telegram.handlers.common import edit_or_answer
 from presentation.telegram.keyboards import menus
-from presentation.telegram.states import ExportStates
 
 router = Router(name="export")
 
 
-@router.callback_query(ExportCallback.filter(F.action.in_({"today", "yesterday", "refresh"})))
+@router.callback_query(ExportCallback.filter(F.action == "days"))
+async def choose_day(callback: CallbackQuery, export: ExportDailyConversations) -> None:
+    # дни считаются в момент нажатия: после полуночи список сдвигается сам
+    days = await export.available_days(callback.from_user.id)
+    labels = [texts.day_button(day, days[0]) for day in days]
+    await callback.answer()
+    await edit_or_answer(callback, texts.CHOOSE_DAY, menus.export_days(days, labels))
+
+
+@router.callback_query(ExportCallback.filter(F.action.in_({"day", "refresh"})))
 async def export_day(
     callback: CallbackQuery, callback_data: ExportCallback, export: ExportDailyConversations
 ) -> None:
-    # выгрузка может идти минутами, а callback нужно подтвердить сразу
+    try:
+        day = date.fromisoformat(callback_data.day)
+    except ValueError:  # callback_data можно подделать
+        await callback.answer(texts.UNEXPECTED_ERROR, show_alert=True)
+        return
+    # выгрузка может занять время, а callback нужно подтвердить сразу
     await callback.answer()
-    today = await export.today(callback.from_user.id)
-    match callback_data.action:
-        case "today":
-            day = today
-        case "yesterday":
-            day = today - timedelta(days=1)
-        case _:
-            day = date.fromisoformat(callback_data.day)
     await _run_export(
         callback.message,
         export,
         callback.from_user.id,
-        callback_data.account_id,
         day,
         refresh=callback_data.action == "refresh",
     )
-
-
-@router.callback_query(ExportCallback.filter(F.action == "ask_date"))
-async def ask_date(
-    callback: CallbackQuery,
-    callback_data: ExportCallback,
-    state: FSMContext,
-    export: ExportDailyConversations,
-) -> None:
-    # владелец проверяется уже здесь, чтобы не спрашивать дату для чужого аккаунта
-    await export.check_access(callback.from_user.id, callback_data.account_id)
-    await state.set_state(ExportStates.date)
-    await state.set_data({"account_id": callback_data.account_id})
-    await callback.answer()
-    await edit_or_answer(callback, texts.ASK_DATE, menus.back_to_account(callback_data.account_id))
-
-
-@router.message(ExportStates.date, F.text)
-async def receive_date(message: Message, state: FSMContext, export: ExportDailyConversations) -> None:
-    account_id: int = (await state.get_data())["account_id"]
-    day = parse_day(message.text, await export.today(message.from_user.id))
-    if day is None:
-        await message.answer(texts.INVALID_DATE, reply_markup=menus.back_to_account(account_id))
-        return
-    await state.clear()
-    await _run_export(message, export, message.from_user.id, account_id, day, refresh=False)
 
 
 async def _run_export(
     chat_message: Message,
     export: ExportDailyConversations,
     user_id: int,
-    account_id: int,
     day: date,
     *,
     refresh: bool,
 ) -> None:
-    status = await chat_message.answer(texts.export_started(day))
+    status = await chat_message.answer(texts.export_progress(day, None))
     try:
-        summary = await export.execute(user_id, account_id, day, refresh=refresh)
+        summary = await export.execute(
+            user_id, day, refresh=refresh, progress=MessageExportProgress(status, day)
+        )
     finally:
         with contextlib.suppress(TelegramBadRequest):
             await status.delete()
     await chat_message.answer(
         texts.export_summary(
-            summary.account.display_name,
             day,
             summary.conversations_count,
             summary.messages_count,
@@ -92,5 +69,5 @@ async def _run_export(
             summary.from_cache,
             summary.day.timezone,
         ),
-        reply_markup=menus.export_done(account_id, day, can_refresh=day == await export.today(user_id)),
+        reply_markup=menus.export_done(day, can_refresh=day == await export.today(user_id)),
     )
