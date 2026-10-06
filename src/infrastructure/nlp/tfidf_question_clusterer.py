@@ -48,13 +48,11 @@ class TfidfQuestionClusterer:
         # подобран на tests/unit/nlp/question_samples.py: темы собираются верно при 0.75–0.85
         distance_threshold: float = 0.8,
         char_weight: float = 0.5,
-        examples: int = 3,
     ) -> None:
         self._normalizer = normalizer
         self._concept_labels = concept_labels
         self._distance_threshold = distance_threshold
         self._char_weight = char_weight
-        self._examples = examples
 
     def cluster(self, questions: list[ClientQuestion]) -> list[QuestionCluster]:
         meanings = self._meanings(questions)
@@ -89,13 +87,15 @@ class TfidfQuestionClusterer:
             )
             for group in groups
         ]
-        clusters.sort(key=lambda c: (-c.count, c.label))
+        clusters.sort(key=lambda c: (-c.count, -c.requests, c.label))
         return clusters
 
     def _meanings(self, questions: list[ClientQuestion]) -> list[_Meaning]:
         by_key: dict[str, _Meaning] = {}
         for question in questions:
-            normalized = self._normalizer.normalize(question.text)
+            normalized = self._normalizer.normalize(
+                f"{question.text} {question.clarification_text}".strip()
+            )
             if not normalized.tokens:
                 continue
             meaning = by_key.setdefault(normalized.key, _Meaning(sorted(set(normalized.tokens))))
@@ -121,22 +121,19 @@ class TfidfQuestionClusterer:
         centrality = similarity @ weights / weights.sum()
         typical = centrality.max() - _CENTRALITY_TOLERANCE
 
-        candidates = [
+        # лучшая формулировка: из типичных, без опечаток, покороче
+        *_, representative = min(
             (centrality[i] < typical, normalized.had_typos, len(question.text), -centrality[i], question.text.strip())
             for i, meaning in enumerate(meanings)
             for question, normalized in meaning.questions
-        ]
-        texts: list[str] = []
-        for *_, text in sorted(candidates):
-            if text not in texts:
-                texts.append(text)
+        )
 
         clients = {question.client_id for m in meanings for question, _ in m.questions}
         return QuestionCluster(
             label=self._label(meanings, word_features, vocabulary, weights),
-            representative_question=texts[0],
+            representative_question=representative,
             count=len(clients),
-            examples=texts[1 : 1 + self._examples],
+            requests=sum(len(m.questions) for m in meanings),
         )
 
     def _label(self, meanings: list[_Meaning], word_features, vocabulary, weights: np.ndarray) -> str:
@@ -152,13 +149,18 @@ class TfidfQuestionClusterer:
             # понятия из словаря надёжнее отдельных слов: «склад» по-украински — «состав»
             concepts = [t for t in ranked if t.startswith(CONCEPT_PREFIX)][:3]
             top = concepts if len(concepts) >= 2 else ranked[:3]
-        return " · ".join(self._display(token) for token in top)
+        display: dict[str, str] = {}
+        for meaning in meanings:
+            for _, normalized in meaning.questions:
+                for token, word in normalized.display.items():
+                    display.setdefault(token, word)
+        return " · ".join(self._display(token, display) for token in top)
 
-    def _display(self, token: str) -> str:
+    def _display(self, token: str, display: dict[str, str]) -> str:
         if token.startswith(CONCEPT_PREFIX):
             name = token.removeprefix(CONCEPT_PREFIX)
             return self._concept_labels.get(name, name)
-        return token
+        return display.get(token, token)
 
 
 def _tokens_and_pairs(tokens: list[str]) -> list[str]:

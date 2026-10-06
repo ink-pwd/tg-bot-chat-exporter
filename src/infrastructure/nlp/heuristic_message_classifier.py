@@ -5,6 +5,7 @@
 import re
 
 _WORD = re.compile(r"[a-zа-яёіїєґ'+]+")
+_DIGIT = re.compile(r"\d")
 
 # сообщение целиком из таких слов — не обращение и не ответ
 _TRIVIAL_WORDS = {
@@ -29,6 +30,44 @@ _HOLDING_MARKERS = {
 }
 _HOLDING_MAX_WORDS = 8
 
+# Напоминания: реплика целиком (без приветствий и «пожалуйста») совпадает с одной из фраз.
+# Список закрытый и короткий намеренно: лучше пропустить напоминание, чем потерять запрос.
+# «Что там с заказом?» сюда не попадёт — в ней есть тема.
+_PING_PHRASES = {
+    "вы тут", "вы здесь", "есть кто", "есть кто нибудь", "кто нибудь", "ау", "алло", "ало",
+    "есть новости", "какие новости", "новости есть", "ну что", "ну что там", "что там",
+    "ну как", "как там", "ну", "ответьте", "ответьте мне", "когда ответите",
+    "когда будет ответ", "жду ответа", "ждем ответа", "жду", "ждем", "напоминаю",
+    "ви тут", "ви тут є", "є хто", "є хтось", "хтось є", "є новини", "які новини",
+    "новини є", "ну що", "ну що там", "що там", "як там", "відповідайте", "коли відповісте",
+    "чекаю", "чекаємо", "чекаю відповіді", "нагадую", "ап", "up",
+}
+
+# вежливое начало, которое не меняет смысла: «Спасибо, а если…», «Добрый день, ещё вопрос»
+_LEAD_SKIP = {
+    "привет", "здравствуйте", "добрый", "доброе", "день", "вечер", "утро", "вітаю", "привіт",
+    "добрий", "вечір", "ранку", "спасибо", "благодарю", "дякую", "ок", "окей", "ok", "хорошо",
+    "понятно", "ясно", "понял", "поняла", "добре", "зрозуміло", "зрозумів", "зрозуміла",
+}
+_LEAD_WORD = re.compile(r"^[\s,.!:;—-]*([a-zа-яёіїєґ']+)")
+
+# начало реплики, продолжающей прошлый запрос
+_FOLLOW_UP = re.compile(
+    r"^(?:а|и|і|то есть|тобто|так а|так и|так і)(?=[\s,?]|$)|"
+    r"^не\s+(?:получ|выход|помогл|сработ|работает|вийш|виход|допомогл|спрацюв|працює)|"
+    r"^(?:вс[её]\s+равно|все\s+одно|так\s+и\s+не|так\s+і\s+не|опять|снова|знову|"
+    r"ещ[её]\s+раз|ще\s+раз|в\s+смысле|это\s+как|це\s+як)"
+)
+# явный переход к новому запросу
+_NEW_TOPIC = re.compile(
+    r"(?:ещ[её]|ще)\s+(?:один\s+|одне\s+)?(?:вопрос|питання)|"
+    r"(?:другой|інше|інший)\s+(?:вопрос|питання|момент)|"
+    r"(?:отдельный|окреме)\s+(?:вопрос|питання)|по\s+другому\s+вопросу|"
+    r"^(?:и|і)\s+(?:ещ[её]|ще)(?=[\s,:]|$)|"
+    r"(?:также|так\s+же|також)\s+(?:хотел|хотела|хотів|хотіла)"
+)
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+|\n+")
+
 _QUESTION_WORDS = {
     # ru
     "как", "где", "почему", "зачем", "когда", "сколько", "какой", "какая", "какие", "каким",
@@ -48,12 +87,30 @@ _REQUEST_PATTERNS = re.compile(
 
 class HeuristicMessageClassifier:
     def is_trivial(self, text: str) -> bool:
+        # число — содержательно: «300», «до 500 смс», номер заказа
+        if _DIGIT.search(text):
+            return False
         words = _WORD.findall(text.lower())
         return all(word in _TRIVIAL_WORDS for word in words)
 
     def is_holding_reply(self, text: str) -> bool:
         words = [w for w in _WORD.findall(text.lower()) if w not in _TRIVIAL_WORDS]
         return 0 < len(words) <= _HOLDING_MAX_WORDS and any(w in _HOLDING_MARKERS for w in words)
+
+    def is_ping(self, text: str) -> bool:
+        words = [w for w in _WORD.findall(text.lower().replace("ё", "е")) if w not in _TRIVIAL_WORDS]
+        return " ".join(words) in _PING_PHRASES
+
+    def request_part(self, text: str) -> str:
+        sentences = [part.strip() for part in _SENTENCE_END.split(text) if part.strip()]
+        requests = [sentence for sentence in sentences if self.is_question(sentence)]
+        return " ".join(requests) if requests else text
+
+    def is_follow_up(self, text: str) -> bool:
+        return bool(_FOLLOW_UP.search(_lead(text)))
+
+    def starts_new_topic(self, text: str) -> bool:
+        return bool(_NEW_TOPIC.search(_lead(text)))
 
     def is_question(self, text: str) -> bool:
         if self.is_trivial(text):
@@ -65,3 +122,11 @@ class HeuristicMessageClassifier:
         if any(word in _QUESTION_WORDS for word in words):
             return True
         return bool(_REQUEST_PATTERNS.search(lowered))
+
+
+def _lead(text: str) -> str:
+    """Начало реплики без приветствий и благодарностей, в нижнем регистре."""
+    lead = text.lower().strip()
+    while (match := _LEAD_WORD.match(lead)) and match[1] in _LEAD_SKIP:
+        lead = lead[match.end():]
+    return lead.lstrip(" ,.!:;—-")

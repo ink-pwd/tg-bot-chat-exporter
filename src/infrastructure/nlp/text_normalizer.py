@@ -2,7 +2,7 @@
 import difflib
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -25,6 +25,8 @@ CONCEPT_PREFIX = "#"
 class NormalizedText:
     tokens: list[str]  # понятия (#change) и леммы без стоп-слов
     had_typos: bool = False  # были исправлены опечатки
+    # токен → как его показывать: «бесплатний» (для сравнения ru/uk) → «бесплатный»
+    display: dict[str, str] = field(default_factory=dict)
 
     @property
     def key(self) -> str:
@@ -70,6 +72,7 @@ class TextNormalizer:
         text = self._fillers.sub(" ", text)
 
         tokens = []
+        display: dict[str, str] = {}
         had_typos = False
         for raw in text.split():
             if raw == NUMBER_TOKEN:
@@ -87,8 +90,14 @@ class TextNormalizer:
                 if concept:
                     tokens.append(CONCEPT_PREFIX + concept)
                 elif len(lemma) > 2:
-                    tokens.append(lemma.translate(_COGNATE_FOLD))
-        return NormalizedText(tokens, had_typos)
+                    token = lemma.translate(_COGNATE_FOLD)
+                    tokens.append(token)
+                    display.setdefault(token, lemma)
+        return NormalizedText(tokens, had_typos, display)
+
+    def topic_tokens(self, text: str) -> frozenset[str]:
+        """Понятия и значимые слова без чисел: по ним сравнивается тема двух реплик."""
+        return frozenset(t for t in self.normalize(text).tokens if t != NUMBER_TOKEN)
 
     def _closest_concept_word(self, word: str) -> str | None:
         """Опечатка в слове из словаря понятий: «спосб» → «способ», «оплаті» → «оплата»."""
