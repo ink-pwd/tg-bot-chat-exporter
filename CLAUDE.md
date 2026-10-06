@@ -2,16 +2,19 @@
 
 ## Project Overview
 
-This project is a Python Telegram bot for analyzing support conversations.
+This project is a Python Telegram bot for analyzing support conversations of Dots
+(a restaurant ordering/delivery platform; clients are restaurants, chats are mostly
+in Ukrainian and Russian).
 
-The bot allows a user to:
+The bot works like this:
 
-1. Authorize a Telegram account and create a Telegram session.
-2. Retrieve conversations/messages from that authorized account.
-3. Export all support conversations for a selected day.
-4. Analyze conversations without using LLMs.
-5. Determine the most common questions/topics using deterministic NLP algorithms.
-6. Return the analysis results through Telegram.
+1. A user adds the bot to a support group chat. That user becomes the chat owner.
+2. The bot records every message of the chat itself (the Bot API has no access to history,
+   so nothing before the bot was added is available).
+3. The owner exports all of their chats for a selected day (today and the 6 previous days)
+   in a private chat with the bot, manually or by a daily auto-export.
+4. Every export is a JSON file plus an HTML report, sent as one album.
+5. The report is built with deterministic NLP, without LLMs.
 
 The project is intended for internal company support analytics.
 
@@ -28,7 +31,7 @@ The main rule is:
 Dependencies must point inward:
 
 ```text
-Infrastructure
+Presentation / Infrastructure
       ↓
 Application
       ↓
@@ -43,175 +46,71 @@ Do not introduce abstractions only for the sake of abstractions. Use interfaces/
 
 ## Architecture
 
-Recommended structure:
-
 ```text
 src/
 ├── domain/
-│   ├── entities/
-│   ├── value_objects/
+│   ├── entities/          support_chat, support_message, conversation, export_schedule, question_cluster, …
+│   ├── value_objects/     day_range, request_topic
 │   ├── enums/
-│   └── repositories/
+│   ├── repositories/      Protocols: support chats, chat messages, schedules, bot users
+│   └── errors.py
 │
 ├── application/
-│   ├── dto/
-│   ├── use_cases/
-│   └── services/
+│   ├── dto/               export summary, daily report
+│   ├── interfaces/        Protocols for infrastructure/presentation adapters
+│   ├── services/          keyed locks, user timezones, personal data masking
+│   └── use_cases/         manage chats, record messages, export, analyze, auto-export
 │
 ├── infrastructure/
-│   ├── telegram/
-│   │   ├── bot/
-│   │   └── client/
-│   ├── persistence/
-│   ├── nlp/
-│   └── config/
+│   ├── persistence/       SQLAlchemy models and repositories (MySQL)
+│   ├── cache/             Redis export cache
+│   ├── telegram/bot/      Bot API actions inside a chat (admins, leave)
+│   ├── nlp/               normalization, heuristics, intent model, topic clustering
+│   │   └── resources/     dictionaries, taxonomy.toml, intent_model.npz
+│   ├── security/          message encryption
+│   ├── config/            settings, logging
+│   └── scheduler.py
 │
 ├── presentation/
 │   └── telegram/
-│       ├── handlers/
+│       ├── handlers/      private menu, group events
 │       ├── keyboards/
-│       └── formatters/
+│       ├── formatters/    JSON export, HTML report
+│       └── …              texts, callbacks, delivery, notifier, progress bar
 │
-└── main.py
+└── main.py                composition root
 
-tests/
-├── unit/
-├── integration/
-└── e2e/
+scripts/                   offline tools (training the intent model), not part of the bot image
+migrations/                Alembic
 ```
 
 ### Domain
 
-Contains business concepts and rules.
-
-Examples:
-
-```text
-domain/entities/
-    telegram_account.py
-    support_message.py
-    conversation.py
-    question_cluster.py
-
-domain/value_objects/
-    telegram_session.py
-    message_text.py
-    chat_id.py
-
-domain/enums/
-    message_type.py
-
-domain/repositories/
-    telegram_account_repository.py
-    conversation_repository.py
-```
-
-Domain code must NOT import:
+Contains business concepts and rules. Domain code must NOT import:
 
 * aiogram
-* Telethon
-* Pyrogram
 * SQLAlchemy
-* scikit-learn
-* numpy
-* pandas
+* redis
+* scikit-learn, numpy, scipy, pymorphy3
+* cryptography
 * external APIs
-* infrastructure modules
+* infrastructure, application or presentation modules
 
 The domain should be testable with pure Python.
 
----
+### Application
 
-## Application Layer
+Contains use cases and application-specific workflows. A use case orchestrates operations but does not know implementation details. It depends on abstractions (`Protocol`s in `application/interfaces` and `domain/repositories`), not concrete implementations.
 
-Contains use cases and application-specific business workflows.
+The application layer should not know whether the request came from Telegram, HTTP, CLI or tests. Use cases are invoked with plain values (`user_id`, `chat_id`, `date`), never with aiogram objects.
 
-Examples:
+### Infrastructure
 
-```text
-application/use_cases/
-    authorize_telegram_account.py
-    export_daily_conversations.py
-    analyze_daily_questions.py
-    get_daily_report.py
-```
+Contains implementations of external dependencies (MySQL, Redis, Bot API calls, NLP libraries, encryption). The rest of the application must not depend directly on SQLAlchemy, scikit-learn or aiogram.
 
-A use case orchestrates operations but should not know implementation details.
+### Presentation
 
-Example:
-
-```python
-class AnalyzeDailyQuestions:
-    def __init__(
-        self,
-        message_repository: MessageRepository,
-        question_analyzer: QuestionAnalyzer,
-    ):
-        ...
-```
-
-The use case should depend on abstractions, not concrete implementations.
-
-Avoid putting Telegram-specific logic into use cases.
-
-The application layer should not know whether the request came from:
-
-* Telegram
-* HTTP
-* CLI
-* tests
-
----
-
-## Infrastructure
-
-Contains implementations of external dependencies.
-
-Examples:
-
-```text
-infrastructure/telegram/client/
-    telethon_client.py
-
-infrastructure/persistence/
-    sqlalchemy/
-        models/
-        repositories/
-
-infrastructure/nlp/
-    tfidf_question_analyzer.py
-    text_normalizer.py
-```
-
-Infrastructure may depend on external libraries.
-
-For example:
-
-```text
-TelethonTelegramClient
-    implements
-TelegramClient
-```
-
-and:
-
-```text
-TfidfQuestionAnalyzer
-    implements
-QuestionAnalyzer
-```
-
-The rest of the application must not depend directly on Telethon or scikit-learn.
-
----
-
-## Presentation
-
-Telegram handlers belong to the presentation layer.
-
-Handlers should be thin.
-
-They should:
+Telegram handlers belong to the presentation layer. Handlers should be thin:
 
 1. Receive Telegram updates.
 2. Validate/extract input.
@@ -219,138 +118,74 @@ They should:
 4. Format the result.
 5. Send the response.
 
-Do not put business logic inside handlers.
+Do not put business logic inside handlers. Convert aiogram objects into domain objects at the boundary (`message_conversion.py`); aiogram types must not go deeper.
 
-Bad:
-
-```python
-@router.callback_query(...)
-async def analyze(callback):
-    messages = await telethon.get_messages(...)
-    ...
-    # NLP logic
-    ...
-```
-
-Good:
-
-```python
-@router.callback_query(...)
-async def analyze(callback):
-    report = await analyze_daily_questions.execute(...)
-    await callback.message.answer(format_report(report))
-```
+The report formatter (HTML/JSON) and all user-facing texts belong to presentation. Do not generate Telegram-formatted strings inside the domain or application.
 
 ---
 
 # Telegram Architecture
 
-There are two different Telegram concerns.
+There is only the Telegram Bot (aiogram). There is no user-account client and no login of any kind.
 
-## Telegram Bot
+## Private chat with the bot
 
-Used for interaction with the user:
+Used by chat owners: main menu, "My chats", export (7-day picker), auto-export schedule, settings (timezone). Access can be limited with `ALLOWED_USER_IDS`.
 
-* authorization flow
-* buttons
-* commands
-* reports
-* status messages
+## Group chats
 
-This should be implemented using a bot framework such as `aiogram`.
+* When the bot is added, the user who added it becomes the owner (`my_chat_member`). If that user is not allowed, the bot leaves the chat.
+* The bot never writes into a group chat — clients must not notice it. Notifications go to the owner's private chat. Error handlers must not reply in groups.
+* The bot needs privacy mode disabled in @BotFather or admin rights, otherwise it only receives commands.
+* Supergroup migration keeps the history (internal chat id stays the same, Telegram chat id changes).
+* If the bot is removed and re-added by another user, the previous owner's history is deleted.
 
-## Telegram User Client
+## Ownership and isolation
 
-Used to access the authorized Telegram account and retrieve its conversations.
+Account isolation is the top priority:
 
-This should be isolated behind an application interface.
-
-For example:
-
-```python
-class TelegramClient(Protocol):
-
-    async def authenticate(...):
-        ...
-
-    async def get_messages(...):
-        ...
-
-    async def get_dialogs(...):
-        ...
-```
-
-The concrete implementation can use Telethon.
-
-Do not expose Telethon types outside infrastructure.
-
-Convert external Telegram objects into domain/application DTOs.
+* Every user-facing read goes through the owner (`*_owned` repository methods). There is intentionally no "get chat by id" without an owner.
+* Callback data (chat ids, days) comes from the client and can be forged — always re-check ownership and limits in the use case.
+* The export cache is keyed by user.
 
 ---
 
-# Authentication and Sessions
+# Message Storage
 
-Telegram user sessions are sensitive credentials.
+Chat messages are sensitive data:
+
+* Text, sender name and forward source are Fernet-encrypted in MySQL (`MESSAGE_ENCRYPTION_KEY`, several keys allowed for rotation).
+* Messages are deleted after `MESSAGE_RETENTION_DAYS` (default 7, matching the export window).
+* Exports are not stored on the server; Redis keeps only sent `file_id`s and counters.
 
 Never:
 
-* commit session files;
-* log session strings;
-* log authentication codes;
-* log passwords;
-* send session data to Telegram users;
-* store session data in plain application logs.
-
-Session storage must be isolated behind an abstraction.
-
-Example:
-
-```text
-TelegramSessionRepository
-```
-
-The application should work with a session identifier/reference rather than depending on Telethon's session implementation.
-
-Use environment variables or a secret manager for encryption keys and sensitive configuration.
+* log message contents, encryption keys or tokens;
+* commit `.env`, exported reports or labeled datasets with client conversations
+  (root-level `*.html` / `*.json` are git-ignored for this reason).
 
 ---
 
 # Message Model
 
-A support message should contain only information required by the application.
-
-Example:
-
-```python
-@dataclass
-class SupportMessage:
-    id: int
-    chat_id: int
-    sender_id: int
-    text: str
-    sent_at: datetime
-```
-
-Do not pass raw Telethon message objects through the application.
-
-Convert them at the infrastructure boundary.
+A support message contains only information required by the application (`SupportMessage`: id, chat id, sender, text, timestamps, reply-to, forward source, media type, service action). Whether a message is from support is decided at export time: chat admins, the owner and anonymous admins are support; everyone else is a client.
 
 ---
 
 # Daily Export
 
-The daily export use case should:
+The export use case:
 
-1. Determine the requested date.
-2. Retrieve the authorized Telegram account.
-3. Retrieve relevant conversations/messages.
-4. Convert them into application/domain objects.
-5. Filter messages belonging to the requested day.
-6. Return an export/report DTO.
+1. Checks the requested day (not in the future, within the 7-day window).
+2. Serves a cached result if available.
+3. Loads the owner's chats and their stored messages for the day.
+4. Marks support messages (admins from the Bot API, saved list as fallback).
+5. Builds `DailyConversationExport`, runs the analysis in a thread, delivers JSON + HTML.
+6. An empty day is reported as "nothing recorded yet" — no empty files, no caching.
 
-Do not mix exporting and NLP analysis.
+Progress is reported through `ExportProgress` stages (shown as a progress bar).
 
-For example:
+Do not mix exporting and NLP analysis:
 
 ```text
 ExportDailyConversations
@@ -362,191 +197,64 @@ AnalyzeDailyQuestions
 DailyQuestionReport
 ```
 
-This allows analysis to work independently of Telegram.
-
 ---
 
 # NLP / Question Analysis
 
-LLMs are NOT required for the initial implementation.
+LLMs are NOT used. Everything is deterministic.
 
-The first implementation should use deterministic NLP.
-
-Recommended pipeline:
+Pipeline:
 
 ```text
-Raw message
+Messages of a chat
     ↓
-Text normalization
+Turns (client messages ≤ 2 min apart; any support message starts a new turn)
     ↓
-Question detection
+Requests / clarifications / reminders
     ↓
-Tokenization / lemmatization
+Personal data masking
     ↓
-Stop-word removal
+Request type by the Dots taxonomy (trained TF-IDF + logistic regression)
     ↓
-TF-IDF
+Unclassified requests → topic clustering ("Other topics")
     ↓
-Cosine similarity
-    ↓
-Clustering
-    ↓
-Question frequency
+Report: categories, top request types, response time, per-chat stats
 ```
 
-Keep NLP behind an interface:
+Definitions:
 
-```python
-class QuestionAnalyzer(Protocol):
+* **Request** — a new client request: a question, an ask, or a media-only message. Only the question sentences of a turn are analyzed.
+* **Clarification** — a turn that continues the client's previous request: reply-to, follow-up markers ("а если…", "не получилось"), no own topic, or ≥50% topic overlap within 2 hours. "Ещё вопрос" always starts a new request.
+* **Reminder** — "вы тут?", "есть новости?" from a closed phrase list. Better to miss a ping than to drop a real request.
+* **Response time** — from a client question to the first substantive support reply (greetings and "секунду, уточню" are not answers; digit-only replies are). Working hours are Mon–Fri 09:00–20:00 in the report timezone.
 
-    def analyze(
-        self,
-        messages: list[SupportMessage],
-    ) -> QuestionAnalysisResult:
-        ...
-```
+## Request types
 
-The application must not know whether the implementation uses:
+* `infrastructure/nlp/resources/taxonomy.toml` — 14 categories and 90 types from the CEO's yearly support report, with Russian titles and knowledge-base answers. Keys must match the model.
+* `intent_model.npz` — vocabularies and weights only, loaded without pickle. Trained offline by `scripts/train_intent_model.py` from the labeled report; the report itself must stay outside the repo.
+* Retrain the model after changing `concepts.toml`, `stopwords.txt` or `fillers.txt`.
+* Thresholds live in `ModelIntentClassifier` (type ≥ 0.4, category ≥ 0.5).
+* The report must clearly separate real support replies from knowledge-base answers.
 
-* TF-IDF
-* cosine similarity
-* clustering
-* another deterministic algorithm
-* LLM in the future
+Keep NLP behind interfaces (`MessageClassifier`, `TopicTokenizer`, `RequestClassifier`, `QuestionClusterer`). The application must not know whether an implementation uses TF-IDF, embeddings or an LLM.
 
----
-
-# Question Detection
-
-Not every support message is necessarily a question.
-
-The first implementation may use deterministic heuristics:
-
-* question mark;
-* interrogative words;
-* common support-question patterns;
-* message length;
-* configurable stop phrases.
-
-Do not attempt to build a perfect linguistic classifier in the first version.
-
-The goal is useful support analytics, not academic NLP.
-
----
-
-# Question Normalization
-
-Normalize messages before comparison.
-
-Possible steps:
-
-```text
-"Подскажите, пожалуйста, как изменить способ оплаты?"
-                    ↓
-"изменить способ оплаты"
-```
-
-Normalization may include:
-
-* lowercase;
-* punctuation removal;
-* whitespace normalization;
-* removing greetings;
-* removing polite filler phrases;
-* removing stop words;
-* lemmatization;
-* removing very short tokens.
-
-Keep normalization deterministic and testable.
-
----
-
-# Question Clustering
-
-Do not simply count exact strings.
-
-These should ideally belong to the same cluster:
-
-```text
-Как изменить способ оплаты?
-
-Подскажите, где поменять способ оплаты?
-
-Можно поменять способ оплаты?
-
-Как сменить способ оплаты?
-```
-
-Use similarity-based grouping.
-
-The exact algorithm can evolve independently from the application layer.
-
-The analyzer should return structured data such as:
-
-```python
-@dataclass
-class QuestionCluster:
-    representative_question: str
-    count: int
-    examples: list[str]
-```
-
-The application can then sort clusters by `count`.
+Embeddings were measured (+5–10 pp of correctly typed requests at 1.5–5 GB RAM) and rejected for the 1 GB server. An LLM fallback for low-confidence requests was discussed but not adopted; any change here needs the user's decision.
 
 ---
 
 # Reporting
 
-The report should contain useful business information.
+The HTML report follows the style of the CEO's yearly support report, scoped to one day: KPIs (requests, median and p90 first reply, replies within 15 minutes in working hours, unanswered, off-hours share), categories, top request types with real dialogs, other topics, response time by hour, per-chat table, longest waits, definitions.
 
-Example:
-
-```text
-Support report — 2026-10-05
-
-Messages: 1,284
-Questions: 763
-Conversations: 218
-
-Top questions:
-
-1. Способ оплаты — 47
-2. Не приходит SMS — 31
-3. Отмена бронирования — 24
-4. Изменение заказа — 19
-5. Добавление сотрудника — 17
-```
-
-The report formatter belongs to the presentation layer.
-
-Do not generate Telegram-formatted strings inside the domain.
+Phones, emails, passwords and tokens are masked before analysis, so neither quotes nor topic labels can leak them. The JSON export stays complete.
 
 ---
 
 # Dependency Injection
 
-Prefer constructor injection.
+Prefer constructor injection. All wiring happens in `main.py`.
 
-Example:
-
-```python
-class AnalyzeDailyQuestions:
-    def __init__(
-        self,
-        message_repository: MessageRepository,
-        question_analyzer: QuestionAnalyzer,
-    ):
-        self.message_repository = message_repository
-        self.question_analyzer = question_analyzer
-```
-
-Avoid:
-
-```python
-self.repository = MessageRepository()
-```
-
-inside business classes.
+Avoid creating dependencies inside business classes (`self.repository = MessageRepository()`).
 
 Avoid global mutable state.
 
@@ -554,140 +262,82 @@ Avoid global mutable state.
 
 # Async
 
-Use async I/O for:
+Use async I/O for the Telegram API, database access and Redis.
 
-* Telegram API;
-* database access;
-* network requests.
-
-CPU-heavy NLP processing may be synchronous.
+CPU-heavy NLP processing is synchronous and runs in a thread (`asyncio.to_thread`).
 
 Do not make every function async automatically.
 
-Use async where there is actual asynchronous I/O.
-
 ---
 
-# Database
+# Database and Deployment
 
-Use a relational database.
-
-Recommended initial choice:
-
-```text
-PostgreSQL
-```
-
-Possible entities:
-
-```text
-telegram_accounts
-telegram_sessions
-conversations
-messages
-daily_reports
-```
-
-Database models belong to infrastructure.
-
-Domain entities must not inherit from SQLAlchemy models.
+* MySQL 8.4 (chosen by the user), Redis, everything in Docker Compose.
+* Tables: `bot_users`, `support_chats`, `chat_messages`, `export_schedules`. Database models belong to infrastructure; domain entities must not inherit from SQLAlchemy models.
+* One initial Alembic migration; the server is installed from scratch.
+* Target server: 1 vCPU, 1 GB RAM (+2 GB swap). MySQL is tuned down (64 MB buffer pool, no performance_schema); each container has its own memory limit and restarts on its own. Keep new dependencies light — check memory before adding anything heavy.
 
 ---
 
 # Configuration
 
-Configuration must come from environment variables or a dedicated configuration object.
-
-Example:
+Configuration comes from environment variables via `infrastructure/config/settings.py`:
 
 ```text
 BOT_TOKEN
 DATABASE_URL
-TELEGRAM_API_ID
-TELEGRAM_API_HASH
-SESSION_ENCRYPTION_KEY
+REDIS_URL
+MESSAGE_ENCRYPTION_KEY
+MESSAGE_RETENTION_DAYS
+ALLOWED_USER_IDS
+DEFAULT_TIMEZONE
+EXPORT_CONCURRENCY
+LOG_LEVEL, LOG_DIR, LOG_RETENTION_DAYS
 ```
 
-Never hardcode secrets.
-
-Never commit `.env`.
-
-Provide `.env.example`.
+Never hardcode secrets. Never commit `.env`. Keep `.env.example` up to date.
 
 ---
 
 # Logging
 
-Logs must be useful for debugging but must not contain sensitive Telegram data.
+Logs must be useful for debugging but must not contain sensitive data.
 
 Never log:
 
-* Telegram session strings;
-* authentication codes;
-* Telegram passwords;
-* message contents by default;
-* access tokens;
-* encryption keys.
+* message contents;
+* encryption keys;
+* bot tokens.
 
-Prefer:
+Prefer ids and counters:
 
 ```text
-Account authentication started
-Account authenticated
-Daily export started
-Daily export completed: 1284 messages
-Question analysis completed: 763 questions, 42 clusters
+Chat connected: chat=1 owner=747133187
+Daily export started: user=… day=2026-10-06
+Question analysis completed: requests=45 classified=36 intents=28 other_topics=9
 ```
 
 ---
 
 # Error Handling
 
-Infrastructure exceptions should be translated into application-level errors where appropriate.
+Infrastructure exceptions are translated into application-level errors (`application/errors.py`, `domain/errors.py`).
 
-Do not leak raw Telethon/SQLAlchemy exceptions to Telegram users.
-
-Users should receive understandable messages:
+Do not leak raw aiogram/SQLAlchemy exceptions to users. Users get understandable messages from `texts.error_text`, for example:
 
 ```text
-Не удалось авторизовать Telegram-аккаунт.
-
-Проверьте код подтверждения и попробуйте ещё раз.
+Сообщения хранятся 7 дней, этот день уже недоступен.
 ```
 
-Detailed technical information belongs in logs.
+Detailed technical information belongs in logs. Errors are only answered in private chats, never in groups.
 
 ---
 
 # Testing
 
-Prioritize tests for business logic.
+There is no test suite in the repository for now — it was removed on the user's request on 2026-10-06. Do not add one unless the user asks.
 
-Especially test:
-
-* text normalization;
-* question detection;
-* similarity;
-* clustering;
-* frequency calculation;
-* date filtering;
-* authorization workflows;
-* report generation.
-
-NLP tests should include realistic variations:
-
-```text
-Как изменить способ оплаты?
-Подскажите где поменять оплату?
-Можно ли сменить способ оплаты?
-Где изменить карту для оплаты?
-```
-
-Tests must not require real Telegram API access.
-
-Use mocks/fakes for infrastructure.
-
-Integration tests may use a test database.
+Verify changes before reporting them as done: lint (`pyflakes`), import check, and ad-hoc scenario scripts outside the repo (fake Bot API session, temporary MySQL/Redis containers). Never require real Telegram API access for checks.
 
 ---
 
@@ -704,13 +354,16 @@ Avoid:
 * service classes containing one trivial method;
 * repositories for every simple in-memory operation;
 * excessive DTO nesting;
-* framework-specific code leaking into domain.
+* framework-specific code leaking into domain;
+* dataclass fields, functions or parameters that nothing reads.
 
 Use `Protocol` when an abstraction is actually needed.
 
 Use type hints consistently.
 
 Prefer small functions and classes with one clear responsibility.
+
+Comments and user-facing texts are in Russian; commit messages are in English.
 
 ---
 
@@ -724,21 +377,23 @@ When implementing a new feature:
 4. Implement the use case.
 5. Implement infrastructure adapters.
 6. Connect the use case to Telegram handlers.
-7. Add tests.
+7. Verify the change (see Testing).
 8. Keep framework-specific code at the boundaries.
 
-Before adding a dependency, ask whether the standard library or an existing project dependency is sufficient.
+Before adding a dependency, ask whether the standard library or an existing project dependency is sufficient, and how much memory it costs on the 1 GB server.
 
-Do not introduce an LLM dependency unless deterministic NLP is demonstrably insufficient.
+Do not introduce an LLM dependency unless deterministic NLP is demonstrably insufficient and the user agrees to sending client texts to a provider.
 
 ---
 
 # Important Architectural Rule
 
-The following dependency is forbidden:
+The following dependencies are forbidden:
 
 ```text
 Domain → Telegram
 Domain → Database
-Doma
+Domain → NLP libraries
+Domain → Infrastructure / Application / Presentation
+Application → Infrastructure / Presentation
 ```
