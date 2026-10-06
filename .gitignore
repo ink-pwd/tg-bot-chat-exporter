@@ -1,10 +1,10 @@
 .env
-# сессии Telethon на случай локальных экспериментов
-*.session
-*.session-journal
 .venv/
 __pycache__/
-.pytest_cache/
 logs/*
 !logs/.gitkeep
 .idea/
+
+# отчёты и выгрузки с перепиской клиентов (например, для scripts/train_intent_model.py)
+/*.html
+/*.json
